@@ -4,13 +4,15 @@ from functools import wraps
 
 from quart import Blueprint, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 
-from .module.auth import (
+from ..auth import (
     ensure_database,
     get_current_user,
     validate_csrf_token,
 )
-from module.database import collection, utc_now
-from routes.module.notifications import (
+
+from ....module.database import collection, utc_now
+
+from ..notifications import (
     create_notification,
     create_notice_sync,
     delete_notice_sync,
