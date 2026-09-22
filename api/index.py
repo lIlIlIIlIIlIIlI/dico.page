@@ -15,7 +15,7 @@ import logging
 import asyncio
 import sys
 import os
-
+from uvicorn import run
 from .routes import (
     all_blueprints
 )
@@ -38,3 +38,6 @@ app.config.update(
 )
 for bp in all_blueprints:
     app.register_blueprint(bp)
+    
+if __name__ == "__main__":
+    run("server.api:app", host="0.0.0.0", port=3000, reload=False)
