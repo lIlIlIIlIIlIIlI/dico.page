@@ -1,0 +1,527 @@
+{% extends "base.html" %}
+
+{% block title %}공지 관리 | Dico.page{% endblock %}
+
+{% block content %}
+<section class="min-h-[calc(100vh-4rem)] bg-base-200">
+    <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
+        {% include "admin/sidebar.html" %}
+
+        <div class="min-w-0 space-y-6">
+            <div>
+                <h1 class="text-2xl font-bold">공지 관리</h1>
+                <p class="mt-1 text-sm text-base-content/60">새 공지를 작성하고 등록된 공지를 관리합니다.</p>
+            </div>
+
+            <div id="notice-message" role="alert" class="alert hidden">
+                <span></span>
+            </div>
+
+            <section class="rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+                <div class="border-b border-base-300 px-5 py-4">
+                    <h2 class="font-semibold">공지 작성</h2>
+                </div>
+
+                <form id="notice-form" action="{{ url_for('admin.create_notice') }}" method="post" class="space-y-5 p-5">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                    <label class="form-control">
+                        <span class="label-text mb-2 font-medium">제목</span>
+                        <input id="notice-title" name="title" type="text" maxlength="100" required class="input input-bordered w-full" placeholder="공지 제목을 입력해 주세요">
+                        <span class="mt-1 text-right text-xs text-base-content/40"><span id="notice-title-count">0</span>/100</span>
+                    </label>
+
+                    <div class="form-control">
+                        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <label for="notice-content" class="label-text font-medium">내용</label>
+                            <div role="tablist" class="tabs tabs-box tabs-sm">
+                                <button id="notice-write-tab" type="button" role="tab" class="tab tab-active">작성</button>
+                                <button id="notice-preview-tab" type="button" role="tab" class="tab">미리보기</button>
+                            </div>
+                        </div>
+
+                        <div id="notice-toolbar" class="flex flex-wrap gap-1 rounded-t-xl border border-b-0 border-base-300 bg-base-200/60 p-2">
+                            <button type="button" class="btn btn-ghost btn-xs font-bold" data-markdown="bold">굵게</button>
+                            <button type="button" class="btn btn-ghost btn-xs" data-markdown="heading">제목</button>
+                            <button type="button" class="btn btn-ghost btn-xs" data-markdown="quote">인용</button>
+                            <button type="button" class="btn btn-ghost btn-xs" data-markdown="list">목록</button>
+                            <button type="button" class="btn btn-ghost btn-xs" data-markdown="link">링크</button>
+                            <button type="button" class="btn btn-ghost btn-xs font-mono" data-markdown="code">코드</button>
+                        </div>
+
+                        <textarea id="notice-content" name="content" maxlength="5000" required class="textarea textarea-bordered min-h-56 w-full resize-y rounded-t-none leading-6" placeholder="공지 내용을 입력해 주세요.&#10;&#10;YouTube·플레이리스트·쇼츠 또는 MP4 주소를 한 줄로 붙여 넣으면 자동으로 표시됩니다."></textarea>
+                        <div id="notice-preview" class="markdown-body dico-markdown hidden min-h-56 rounded-b-xl border border-t-0 border-base-300 bg-base-100 p-4"></div>
+
+                        <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-base-content/45">
+                            <span>마크다운과 YouTube·플레이리스트·쇼츠·MP4 자동 임베드를 지원합니다.</span>
+                            <span><span id="notice-content-count">0</span>/5,000</span>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-3 rounded-xl bg-base-200/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div class="space-y-2">
+                            <label class="flex cursor-pointer items-center gap-3">
+                                <input name="is_pinned" type="checkbox" class="checkbox checkbox-primary checkbox-sm">
+                                <span class="text-sm">목록 상단에 고정</span>
+                            </label>
+                            <label class="flex cursor-pointer items-center gap-3">
+                                <input name="send_notification" type="checkbox" class="checkbox checkbox-primary checkbox-sm" checked>
+                                <span class="text-sm">전체 회원에게 알림 보내기</span>
+                            </label>
+                        </div>
+
+                        <button id="notice-submit" type="submit" class="btn btn-primary sm:min-w-28">공지 등록</button>
+                    </div>
+                </form>
+            </section>
+
+            <section class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+                <div class="flex items-center justify-between border-b border-base-300 px-5 py-4">
+                    <h2 class="font-semibold">등록된 공지</h2>
+                    <a href="{{ url_for('notifications.notice_list') }}" class="btn btn-ghost btn-sm text-primary">사용자 화면 보기</a>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>공지</th>
+                                <th>작성자</th>
+                                <th>작성일</th>
+                                <th class="text-right">관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="notice-list">
+                            {% for notice in notice_items %}
+                            <tr data-notice-id="{{ notice.id }}" data-pinned="{{ 'true' if notice.is_pinned else 'false' }}">
+                                <td>
+                                    <div class="flex items-center gap-2">
+                                        {% if notice.is_pinned %}<span class="badge badge-primary badge-sm">고정</span>{% endif %}
+                                        <a href="{{ url_for('notifications.notice_detail', notice_id=notice.id) }}" class="font-medium hover:text-primary hover:underline">{{ notice.title }}</a>
+                                    </div>
+                                </td>
+                                <td>{{ notice.author_nickname }}</td>
+                                <td class="whitespace-nowrap text-base-content/60">{{ notice.created_at[:10] }}</td>
+                                <td class="text-right">
+                                    <button type="button" class="notice-delete btn btn-ghost btn-sm text-error" data-notice-id="{{ notice.id }}">삭제</button>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr id="notice-empty-row">
+                                <td colspan="4" class="py-12 text-center text-base-content/50">등록된 공지가 없습니다.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const form = document.getElementById('notice-form');
+    const titleInput = document.getElementById('notice-title');
+    const contentInput = document.getElementById('notice-content');
+    const titleCount = document.getElementById('notice-title-count');
+    const contentCount = document.getElementById('notice-content-count');
+    const toolbar = document.getElementById('notice-toolbar');
+    const preview = document.getElementById('notice-preview');
+    const writeTab = document.getElementById('notice-write-tab');
+    const previewTab = document.getElementById('notice-preview-tab');
+    const submitButton = document.getElementById('notice-submit');
+    const noticeList = document.getElementById('notice-list');
+    const message = document.getElementById('notice-message');
+    const messageText = message.querySelector('span');
+    const csrfToken = {{ csrf_token | tojson }};
+    const previewUrl = {{ url_for('home.preview_markdown') | tojson }};
+    const detailUrlTemplate = {{ url_for('notifications.notice_detail', notice_id=0) | tojson }};
+    const deleteUrlTemplate = {{ url_for('admin.delete_notice', notice_id=0) | tojson }};
+    const streamUrl = {{ url_for('admin.admin_stream') | tojson }};
+    let eventSource = null;
+    let previewMode = false;
+    let previewController = null;
+    let previewTimer = null;
+
+    function showMessage(text, type = 'success') {
+        message.className = `alert ${type === 'error' ? 'alert-error' : 'alert-success'}`;
+        messageText.textContent = text;
+        window.setTimeout(() => message.classList.add('hidden'), 4000);
+    }
+
+    function createNoticeRow(notice) {
+        const row = document.createElement('tr');
+        row.dataset.noticeId = notice.id;
+        row.dataset.pinned = String(notice.is_pinned === true);
+
+        const noticeCell = document.createElement('td');
+        const titleWrapper = document.createElement('div');
+        titleWrapper.className = 'flex items-center gap-2';
+
+        if (notice.is_pinned) {
+            const badge = document.createElement('span');
+            badge.className = 'badge badge-primary badge-sm';
+            badge.textContent = '고정';
+            titleWrapper.appendChild(badge);
+        }
+
+        const link = document.createElement('a');
+        link.href = detailUrlTemplate.replace(/0$/, String(notice.id));
+        link.className = 'font-medium hover:text-primary hover:underline';
+        link.textContent = notice.title;
+        titleWrapper.appendChild(link);
+        noticeCell.appendChild(titleWrapper);
+
+        const authorCell = document.createElement('td');
+        authorCell.textContent = notice.author_nickname;
+        const dateCell = document.createElement('td');
+        dateCell.className = 'whitespace-nowrap text-base-content/60';
+        dateCell.textContent = String(notice.created_at).slice(0, 10);
+        const actionCell = document.createElement('td');
+        actionCell.className = 'text-right';
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'notice-delete btn btn-ghost btn-sm text-error';
+        deleteButton.dataset.noticeId = notice.id;
+        deleteButton.textContent = '삭제';
+        actionCell.appendChild(deleteButton);
+        row.append(noticeCell, authorCell, dateCell, actionCell);
+        return row;
+    }
+
+    function ensureEmptyRow() {
+        if (noticeList.querySelector('tr[data-notice-id]')) return;
+
+        const row = document.createElement('tr');
+        row.id = 'notice-empty-row';
+        const cell = document.createElement('td');
+        cell.colSpan = 4;
+        cell.className = 'py-12 text-center text-base-content/50';
+        cell.textContent = '등록된 공지가 없습니다.';
+        row.appendChild(cell);
+        noticeList.replaceChildren(row);
+    }
+
+    function insertNotice(notice) {
+        if (noticeList.querySelector(`[data-notice-id="${notice.id}"]`)) return;
+
+        document.getElementById('notice-empty-row')?.remove();
+        const row = createNoticeRow(notice);
+
+        if (notice.is_pinned) {
+            noticeList.prepend(row);
+            return;
+        }
+
+        const firstUnpinned = noticeList.querySelector('tr[data-pinned="false"]');
+        if (firstUnpinned) noticeList.insertBefore(row, firstUnpinned);
+        else noticeList.appendChild(row);
+    }
+
+    function updateCounters() {
+        titleCount.textContent = titleInput.value.length;
+        contentCount.textContent = contentInput.value.length.toLocaleString('ko-KR');
+    }
+
+    function getMediaInfo(rawUrl) {
+        try {
+            const url = new URL(rawUrl);
+            if (!['http:', 'https:'].includes(url.protocol)) return null;
+
+            const host = url.hostname.toLowerCase().replace(/^www\./, '');
+            const parts = url.pathname.split('/').filter(Boolean);
+            let videoId = '';
+            let playlistId = '';
+
+            if (host === 'youtu.be') videoId = parts[0] || '';
+            if (['youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube-nocookie.com'].includes(host)) {
+                playlistId = url.searchParams.get('list') || '';
+                if (url.pathname === '/watch') videoId = url.searchParams.get('v') || '';
+                if (['shorts', 'embed', 'live'].includes(parts[0])) videoId = parts[1] || '';
+            }
+
+            if (['instagram.com', 'instagr.am'].includes(host) && parts.length >= 2 && ['reel', 'reels', 'p', 'tv'].includes(parts[0].toLowerCase())) {
+                const type = parts[0].toLowerCase() === 'reels' ? 'reel' : parts[0].toLowerCase();
+                const shortcode = parts[1];
+                if (/^[A-Za-z0-9_-]{2,100}$/.test(shortcode)) {
+                    return { type: 'instagram', src: `https://www.instagram.com/${type}/${shortcode}/embed` };
+                }
+            }
+
+            if (/^[A-Za-z0-9_-]{10,100}$/.test(playlistId) && ['/playlist', '/watch'].includes(url.pathname)) {
+                return {
+                    type: 'youtube',
+                    src: `https://www.youtube-nocookie.com/embed/videoseries?list=${playlistId}`
+                };
+            }
+            if (/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) {
+                return { type: 'youtube', src: `https://www.youtube-nocookie.com/embed/${videoId}` };
+            }
+            if (/\.(mp4|webm|ogg)$/i.test(url.pathname)) {
+                return { type: 'video', src: url.href };
+            }
+        } catch (error) {
+            return null;
+        }
+
+        return null;
+    }
+
+    function createMediaElement(info) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'dico-media';
+
+        if (info.type === 'youtube') {
+            const iframe = document.createElement('iframe');
+            iframe.className = 'dico-media-frame';
+            iframe.src = info.src;
+            iframe.title = 'YouTube 동영상';
+            iframe.loading = 'lazy';
+            iframe.setAttribute('scrolling', 'no');
+            iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+            iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+            iframe.allowFullscreen = true;
+            wrapper.appendChild(iframe);
+            return wrapper;
+        }
+
+        if (info.type === 'instagram') {
+            const iframe = document.createElement('iframe');
+            iframe.className = 'dico-media-frame dico-media-instagram-frame';
+            iframe.src = info.src;
+            iframe.title = 'Instagram 게시물';
+            iframe.loading = 'lazy';
+            iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+            iframe.allow = 'autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share';
+            iframe.allowFullscreen = true;
+            wrapper.appendChild(iframe);
+            return wrapper;
+        }
+
+        const video = document.createElement('video');
+        video.className = 'dico-media-frame';
+        video.src = info.src;
+        video.controls = true;
+        video.preload = 'metadata';
+        video.playsInline = true;
+        wrapper.appendChild(video);
+        return wrapper;
+    }
+
+    function renderPreviewWithCdn() {
+        if (!window.marked || !window.DOMPurify) return false;
+
+        const media = [];
+        let openedFence = null;
+        const prepared = contentInput.value.replace(/\r\n?/g, '\n').split('\n').flatMap((line) => {
+            const trimmed = line.trim();
+
+            if (!openedFence) {
+                const singleLineFence = trimmed.match(/^(`{3,}|~{3,})(.*?)\1$/);
+                if (singleLineFence) {
+                    const [, marker, code] = singleLineFence;
+                    return [marker, code.trim(), marker];
+                }
+            }
+
+            const fence = trimmed.match(/^(`{3,}|~{3,})(?:[A-Za-z0-9_+-]{0,32})?\s*$/);
+            if (fence) openedFence = openedFence === fence[1] ? null : fence[1];
+
+            let candidate = line.trim();
+            if (candidate.startsWith('<') && candidate.endsWith('>')) candidate = candidate.slice(1, -1);
+
+            const info = getMediaInfo(candidate);
+            if (!info || openedFence) return [line];
+
+            const index = media.push(info) - 1;
+            return ['', `<div data-dico-media-index="${index}"></div>`, ''];
+        }).join('\n');
+
+        const rendered = window.marked.parse(prepared, { gfm: true, breaks: true });
+        preview.innerHTML = window.DOMPurify.sanitize(rendered, {
+            ADD_ATTR: ['data-dico-media-index']
+        });
+
+        preview.querySelectorAll('[data-dico-media-index]').forEach((placeholder) => {
+            const info = media[Number(placeholder.dataset.dicoMediaIndex)];
+            if (info) placeholder.replaceWith(createMediaElement(info));
+        });
+
+        if (!preview.innerHTML.trim()) {
+            preview.innerHTML = '<p class="text-base-content/45">미리볼 내용이 없습니다.</p>';
+        }
+        return true;
+    }
+
+    async function renderPreview() {
+        previewController?.abort();
+        const controller = new AbortController();
+        previewController = controller;
+
+        if (renderPreviewWithCdn()) return;
+
+        preview.innerHTML = '<div class="flex min-h-40 items-center justify-center"><span class="loading loading-spinner loading-sm"></span></div>';
+        const body = new FormData();
+        body.append('csrf_token', csrfToken);
+        body.append('content', contentInput.value);
+
+        try {
+            const response = await fetch(previewUrl, {
+                method: 'POST',
+                body,
+                headers: { 'Accept': 'application/json' },
+                signal: controller.signal
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || '미리보기를 불러오지 못했습니다.');
+            }
+            preview.innerHTML = data.html || '<p class="text-base-content/45">미리볼 내용이 없습니다.</p>';
+        } catch (error) {
+            if (error.name === 'AbortError') return;
+            preview.textContent = error.message || '미리보기를 불러오지 못했습니다.';
+        }
+    }
+
+    function setPreviewMode(enabled) {
+        previewMode = enabled;
+        contentInput.classList.toggle('hidden', enabled);
+        toolbar.classList.toggle('hidden', enabled);
+        preview.classList.toggle('hidden', !enabled);
+        writeTab.classList.toggle('tab-active', !enabled);
+        previewTab.classList.toggle('tab-active', enabled);
+
+        if (enabled) renderPreview();
+        else {
+            previewController?.abort();
+            contentInput.focus();
+        }
+    }
+
+    function replaceSelection(prefix, suffix = '', placeholder = '') {
+        const start = contentInput.selectionStart;
+        const end = contentInput.selectionEnd;
+        const selected = contentInput.value.slice(start, end) || placeholder;
+        contentInput.setRangeText(`${prefix}${selected}${suffix}`, start, end, 'end');
+        contentInput.dispatchEvent(new Event('input', { bubbles: true }));
+        contentInput.focus();
+    }
+
+    toolbar.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-markdown]');
+        if (!button) return;
+
+        const action = button.dataset.markdown;
+        if (action === 'bold') replaceSelection('**', '**', '굵은 글씨');
+        if (action === 'heading') replaceSelection('## ', '', '제목');
+        if (action === 'quote') replaceSelection('> ', '', '인용문');
+        if (action === 'list') replaceSelection('- ', '', '목록 항목');
+        if (action === 'link') replaceSelection('[', '](https://)', '링크 이름');
+        if (action === 'code') replaceSelection('```\n', '\n```', '코드');
+    });
+
+    writeTab.addEventListener('click', () => setPreviewMode(false));
+    previewTab.addEventListener('click', () => setPreviewMode(true));
+    titleInput.addEventListener('input', updateCounters);
+    contentInput.addEventListener('input', () => {
+        updateCounters();
+        if (previewMode) {
+            window.clearTimeout(previewTimer);
+            previewTimer = window.setTimeout(renderPreview, 250);
+        }
+    });
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        submitButton.disabled = true;
+        submitButton.classList.add('loading');
+
+        try {
+            const response = await fetch(form.action, {
+                method: 'POST',
+                body: new FormData(form),
+                headers: { 'Accept': 'application/json' }
+            });
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || '공지를 작성하지 못했습니다.');
+            }
+
+            insertNotice(data.notice);
+            form.reset();
+            form.querySelector('[name="send_notification"]').checked = true;
+            setPreviewMode(false);
+            updateCounters();
+
+            const deliveryText = data.delivered_count > 0
+                ? ` ${data.delivered_count}명에게 알림을 보냈습니다.`
+                : '';
+            showMessage(data.message + deliveryText);
+        } catch (error) {
+            showMessage(error.message, 'error');
+        } finally {
+            submitButton.disabled = false;
+            submitButton.classList.remove('loading');
+        }
+    });
+
+    noticeList.addEventListener('click', async (event) => {
+        const button = event.target.closest('.notice-delete');
+        if (!button || !window.confirm('이 공지를 삭제하시겠습니까?')) return;
+
+        button.disabled = true;
+        const noticeId = button.dataset.noticeId;
+        const url = deleteUrlTemplate.replace(/0$/, noticeId);
+
+        try {
+            const response = await fetch(url, {
+                method: 'DELETE',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-CSRF-Token': csrfToken
+                }
+            });
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || '공지를 삭제하지 못했습니다.');
+            }
+
+            button.closest('tr')?.remove();
+            showMessage(data.message);
+
+            ensureEmptyRow();
+        } catch (error) {
+            button.disabled = false;
+            showMessage(error.message, 'error');
+        }
+    });
+
+    if ('EventSource' in window) {
+        eventSource = new EventSource(streamUrl);
+        eventSource.addEventListener('notice-created', (event) => {
+            const data = JSON.parse(event.data);
+            insertNotice(data.notice);
+        });
+        eventSource.addEventListener('notice-deleted', (event) => {
+            const data = JSON.parse(event.data);
+            noticeList.querySelector(`[data-notice-id="${data.notice_id}"]`)?.remove();
+            ensureEmptyRow();
+        });
+        eventSource.addEventListener('admin-access-revoked', (event) => {
+            const data = JSON.parse(event.data);
+            window.location.href = data.redirect || '/';
+        });
+    }
+
+    window.addEventListener('pagehide', () => {
+        eventSource?.close();
+    }, { once: true });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,26 @@
+<aside class="h-fit rounded-2xl border border-base-300 bg-base-100 p-3 shadow-sm lg:sticky lg:top-20">
+    <div class="px-3 pb-3 pt-2">
+        <p class="text-xs font-semibold uppercase tracking-wider text-base-content/40">커뮤니티</p>
+        <p class="mt-1 font-bold">게시판</p>
+    </div>
+
+    <ul class="menu w-full gap-1 p-0">
+        <li><a href="{{ url_for('home.index') }}">전체 게시글</a></li>
+        <li><a href="{{ url_for('home.index', category='general') }}"><span class="size-2 rounded-full bg-base-content/30"></span>자유 게시판</a></li>
+        <li><a href="{{ url_for('home.index', category='question') }}"><span class="size-2 rounded-full bg-warning"></span>질문 게시판</a></li>
+        <li><a href="{{ url_for('home.index', category='info') }}"><span class="size-2 rounded-full bg-info"></span>정보 게시판</a></li>
+        <li class="my-1 border-t border-base-200"></li>
+        <li>
+            <a href="{{ url_for('notifications.notice_list') }}">
+                <span class="size-2 rounded-full bg-primary"></span>
+                공지사항
+            </a>
+        </li>
+    </ul>
+
+    {% if current_user | default(none) %}
+    <a href="{{ url_for('home.write') }}" class="btn btn-primary btn-sm mt-4 w-full">글쓰기</a>
+    {% else %}
+    <a href="{{ url_for('auth.login', next=url_for('home.write')) }}" class="btn btn-primary btn-sm mt-4 w-full">로그인 후 글쓰기</a>
+    {% endif %}
+</aside>

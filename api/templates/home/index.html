@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}커뮤니티 | Dico.page{% endblock %}
+
+{% block content %}
+<section class="min-h-[calc(100vh-4rem)] bg-base-200/60" data-async-page>
+    <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:py-8">
+        {% include "layout/sidebar.html" %}
+
+        <div class="min-w-0">
+            <div class="breadcrumbs max-w-full py-0 text-sm text-base-content/50">
+                <ul>
+                    <li><a href="{{ url_for('home.index') }}">홈</a></li>
+                    <li>커뮤니티</li>
+                    {% if category %}<li>{{ categories.get(category, '전체 게시글') }}</li>{% endif %}
+                </ul>
+            </div>
+
+            <div class="mb-5 mt-3 flex flex-wrap items-end justify-between gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold">{% if category %}{{ categories.get(category, '커뮤니티') }} 게시판{% else %}전체 게시글{% endif %}</h1>
+                    <p class="mt-1 text-sm text-base-content/55">자유롭게 이야기를 나누고 정보를 공유해 보세요.</p>
+                </div>
+                <span class="badge badge-ghost">게시글 {{ total }}개</span>
+            </div>
+
+            <form method="get" action="{{ url_for('home.index') }}" class="mb-4 flex gap-2 rounded-2xl border border-base-300 bg-base-100 p-3 shadow-sm">
+                {% if category %}<input type="hidden" name="category" value="{{ category }}">{% endif %}
+                <label class="input input-bordered flex min-w-0 flex-1 items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4 text-base-content/40"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+                    <input name="q" value="{{ search }}" class="min-w-0 grow" placeholder="제목, 내용, 작성자 검색">
+                </label>
+                <button class="btn btn-primary" type="submit">검색</button>
+            </form>
+
+            <section class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+                <div class="overflow-x-auto">
+                    <table class="table table-sm min-w-[760px]">
+                        <thead class="bg-base-200/70 text-base-content/60">
+                            <tr>
+                                <th class="w-20 text-center">번호</th>
+                                <th>제목</th>
+                                <th class="w-40">작성자</th>
+                                <th class="w-28 text-center">작성일</th>
+                                <th class="w-20 text-center">조회</th>
+                                <th class="w-20 text-center">추천</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for notice in notices %}
+                            <tr class="border-base-200 bg-primary/5 hover:bg-primary/10">
+                                <td class="text-center"><span class="badge badge-primary badge-sm">공지</span></td>
+                                <td>
+                                    <a href="{{ url_for('notifications.notice_detail', notice_id=notice.id) }}" class="flex items-center gap-2 font-semibold hover:text-primary">
+                                        {% if notice.is_pinned %}<span aria-hidden="true">📌</span>{% endif %}<span class="truncate">{{ notice.title }}</span>
+                                    </a>
+                                </td>
+                                <td class="text-base-content/65">{{ notice.author_nickname }}</td>
+                                <td class="text-center text-base-content/50">{{ notice.created_at[:10] }}</td>
+                                <td class="text-center text-base-content/30">-</td>
+                                <td class="text-center text-base-content/30">-</td>
+                            </tr>
+                            {% endfor %}
+
+                            {% for post in posts %}
+                            {% set post_url = url_for('home.post_detail', post_id=post.id) %}
+                            <tr class="border-base-200 hover:bg-base-200/45">
+                                <td class="p-0 text-center text-base-content/45">
+                                    <a href="{{ post_url }}" class="block px-3 py-2">{{ post.id }}</a>
+                                </td>
+                                <td class="p-0">
+                                    <a href="{{ post_url }}" class="group flex min-w-0 items-center gap-2 px-3 py-2 font-medium">
+                                        {% if post.category == 'question' %}<span class="badge badge-warning badge-sm shrink-0">질문</span>{% endif %}
+                                        {% if post.category == 'info' %}<span class="badge badge-info badge-sm shrink-0">정보</span>{% endif %}
+                                        <span class="truncate group-hover:text-primary group-hover:underline">{{ post.title }}</span>
+                                        {% if post.comment_count %}<span class="shrink-0 text-xs font-medium text-primary">[{{ post.comment_count }}]</span>{% endif %}
+                                    </a>
+                                </td>
+                                <td class="max-w-40 p-0">
+                                    <a href="{{ post_url }}" class="block truncate px-3 py-2">{{ post.author_nickname }}</a>
+                                </td>
+                                <td class="p-0 text-center text-base-content/50">
+                                    <a href="{{ post_url }}" class="block px-3 py-2">{{ post.created_at[:10] }}</a>
+                                </td>
+                                <td class="p-0 text-center text-base-content/50">
+                                    <a href="{{ post_url }}" class="block px-3 py-2">{{ post.views }}</a>
+                                </td>
+                                <td class="p-0 text-center text-base-content/50">
+                                    <a href="{{ post_url }}" class="block px-3 py-2">{{ post.like_count }}</a>
+                                </td>
+                            </tr>
+                            {% else %}
+                            {% if not notices %}<tr><td colspan="6" class="py-20 text-center text-base-content/45">등록된 게시글이 없습니다.</td></tr>{% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
+                {% if search %}<a href="{{ url_for('home.index', category=category) }}" class="btn btn-ghost btn-sm">검색 초기화</a>{% else %}<span></span>{% endif %}
+                <div class="join">
+                    <a href="{{ url_for('home.index', page=page-1, q=search, category=category) }}" class="btn btn-sm join-item {% if page <= 1 %}btn-disabled{% endif %}">이전</a>
+                    <button type="button" class="btn btn-sm join-item pointer-events-none bg-base-100">{{ page }} / {{ total_pages }}</button>
+                    <a href="{{ url_for('home.index', page=page+1, q=search, category=category) }}" class="btn btn-sm join-item {% if page >= total_pages %}btn-disabled{% endif %}">다음</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+
+{% block title %}글쓰기 | Dico.page{% endblock %}
+
+{% block content %}
+<section class="min-h-[calc(100vh-4rem)] bg-base-200/60" data-async-page>
+    <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:py-8">
+        {% include "layout/sidebar.html" %}
+
+        <div class="min-w-0">
+            <div class="breadcrumbs max-w-full py-0 text-sm text-base-content/50"><ul><li><a href="{{ url_for('home.index') }}">홈</a></li><li><a href="{{ url_for('home.index') }}">커뮤니티</a></li><li>글쓰기</li></ul></div>
+            <div class="mb-5 mt-3"><h1 class="text-2xl font-bold">글쓰기</h1><p class="mt-1 text-sm text-base-content/55">커뮤니티에 새로운 글을 작성합니다.</p></div>
+
+            {% if error %}<div role="alert" class="alert alert-error mb-4"><span>{{ error }}</span></div>{% endif %}
+
+            <form id="post-write-form" method="post" action="{{ url_for('home.write') }}" class="space-y-5 rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-7">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label class="form-control">
+                    <span class="label-text mb-2 font-medium">게시판</span>
+                    <select name="category" class="select select-bordered w-full" required>{% for key, label in categories.items() %}<option value="{{ key }}" {% if values.category == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+                </label>
+                <label class="form-control"><span class="label-text mb-2 font-medium">제목</span><input name="title" value="{{ values.title }}" maxlength="100" required class="input input-bordered w-full" placeholder="제목을 입력해 주세요"></label>
+                <div class="form-control">
+                    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <label for="post-content" class="label-text font-medium">내용</label>
+                        <div role="tablist" class="tabs tabs-box tabs-sm">
+                            <button id="write-tab" type="button" role="tab" class="tab tab-active">작성</button>
+                            <button id="preview-tab" type="button" role="tab" class="tab">미리보기</button>
+                        </div>
+                    </div>
+
+                    <div id="markdown-toolbar" class="flex flex-wrap gap-1 rounded-t-xl border border-b-0 border-base-300 bg-base-200/60 p-2">
+                        <button type="button" class="btn btn-ghost btn-xs font-bold" data-markdown="bold">굵게</button>
+                        <button type="button" class="btn btn-ghost btn-xs" data-markdown="heading">제목</button>
+                        <button type="button" class="btn btn-ghost btn-xs" data-markdown="quote">인용</button>
+                        <button type="button" class="btn btn-ghost btn-xs" data-markdown="list">목록</button>
+                        <button type="button" class="btn btn-ghost btn-xs" data-markdown="link">링크</button>
+                        <button type="button" class="btn btn-ghost btn-xs font-mono" data-markdown="code">코드</button>
+                    </div>
+
+                    <textarea id="post-content" name="content" maxlength="10000" required class="textarea textarea-bordered min-h-80 w-full resize-y rounded-t-none leading-7" placeholder="내용을 입력해 주세요.&#10;&#10;YouTube·Instagram 릴스·MP4 주소를 한 줄로 붙여 넣으면 자동으로 임베드됩니다.">{{ values.content }}</textarea>
+                    <div id="markdown-preview" class="markdown-body dico-markdown hidden min-h-80 rounded-b-xl border border-t-0 border-base-300 bg-base-100 p-4"></div>
+
+                    <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-base-content/45">
+                        <span>마크다운을 지원합니다. YouTube·Instagram 릴스·MP4·WebM·OGG 주소는 한 줄로 입력하면 자동 임베드됩니다.</span>
+                        <span><span id="content-count">{{ values.content | length }}</span>/10,000</span>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 border-t border-base-300 pt-5"><a href="{{ url_for('home.index') }}" class="btn btn-ghost">취소</a><button type="submit" class="btn btn-primary">등록</button></div>
+            </form>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const form = document.getElementById('post-write-form');
+    if (!form) return;
+
+    const contentInput = document.getElementById('post-content');
+    const preview = document.getElementById('markdown-preview');
+    const toolbar = document.getElementById('markdown-toolbar');
+    const writeTab = document.getElementById('write-tab');
+    const previewTab = document.getElementById('preview-tab');
+    const contentCount = document.getElementById('content-count');
+    const previewUrl = {{ url_for('home.preview_markdown') | tojson }};
+    const csrfToken = form.querySelector('[name="csrf_token"]').value;
+    let previewMode = false;
+    let previewController = null;
+    let previewTimer = null;
+
+    function updateCount() {
+        contentCount.textContent = contentInput.value.length.toLocaleString('ko-KR');
+    }
+
+    function getMediaInfo(rawUrl) {
+        try {
+            const url = new URL(rawUrl);
+            if (!['http:', 'https:'].includes(url.protocol)) return null;
+
+            const host = url.hostname.toLowerCase().replace(/^www\./, '');
+            const parts = url.pathname.split('/').filter(Boolean);
+            let videoId = '';
+            let playlistId = '';
+
+            if (host === 'youtu.be') videoId = parts[0] || '';
+            if (['youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube-nocookie.com'].includes(host)) {
+                playlistId = url.searchParams.get('list') || '';
+                if (url.pathname === '/watch') videoId = url.searchParams.get('v') || '';
+                if (['shorts', 'embed', 'live'].includes(parts[0])) videoId = parts[1] || '';
+            }
+
+            if (['instagram.com', 'instagr.am'].includes(host) && parts.length >= 2 && ['reel', 'reels', 'p', 'tv'].includes(parts[0].toLowerCase())) {
+                const type = parts[0].toLowerCase() === 'reels' ? 'reel' : parts[0].toLowerCase();
+                const shortcode = parts[1];
+                if (/^[A-Za-z0-9_-]{2,100}$/.test(shortcode)) {
+                    return { type: 'instagram', src: `https://www.instagram.com/${type}/${shortcode}/embed` };
+                }
+            }
+
+            if (/^[A-Za-z0-9_-]{10,100}$/.test(playlistId) && ['/playlist', '/watch'].includes(url.pathname)) {
+                return {
+                    type: 'youtube',
+                    src: `https://www.youtube-nocookie.com/embed/videoseries?list=${playlistId}`
+                };
+            }
+            if (/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) {
+                return { type: 'youtube', src: `https://www.youtube-nocookie.com/embed/${videoId}` };
+            }
+            if (/\.(mp4|webm|ogg)$/i.test(url.pathname)) {
+                return { type: 'video', src: url.href };
+            }
+        } catch (error) {
+            return null;
+        }
+
+        return null;
+    }
+
+    function createMediaElement(info) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'dico-media';
+
+        if (info.type === 'youtube') {
+            const iframe = document.createElement('iframe');
+            iframe.className = 'dico-media-frame';
+            iframe.src = info.src;
+            iframe.title = 'YouTube 동영상';
+            iframe.loading = 'lazy';
+            iframe.setAttribute('scrolling', 'no');
+            iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+            iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+            iframe.allowFullscreen = true;
+            wrapper.appendChild(iframe);
+            return wrapper;
+        }
+
+        if (info.type === 'instagram') {
+            const iframe = document.createElement('iframe');
+            iframe.className = 'dico-media-frame dico-media-instagram-frame';
+            iframe.src = info.src;
+            iframe.title = 'Instagram 게시물';
+            iframe.loading = 'lazy';
+            iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+            iframe.allow = 'autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share';
+            iframe.allowFullscreen = true;
+            wrapper.appendChild(iframe);
+            return wrapper;
+        }
+
+        const video = document.createElement('video');
+        video.className = 'dico-media-frame';
+        video.src = info.src;
+        video.controls = true;
+        video.preload = 'metadata';
+        video.playsInline = true;
+        wrapper.appendChild(video);
+        return wrapper;
+    }
+
+    function renderPreviewWithCdn() {
+        if (!window.marked || !window.DOMPurify) return false;
+
+        const media = [];
+        let openedFence = null;
+        const prepared = contentInput.value.replace(/\r\n?/g, '\n').split('\n').flatMap((line) => {
+            const trimmed = line.trim();
+
+            if (!openedFence) {
+                const singleLineFence = trimmed.match(/^(`{3,}|~{3,})(.*?)\1$/);
+                if (singleLineFence) {
+                    const [, marker, code] = singleLineFence;
+                    return [marker, code.trim(), marker];
+                }
+            }
+
+            const fence = trimmed.match(/^(`{3,}|~{3,})(?:[A-Za-z0-9_+-]{0,32})?\s*$/);
+            if (fence) openedFence = openedFence === fence[1] ? null : fence[1];
+
+            let candidate = line.trim();
+            if (candidate.startsWith('<') && candidate.endsWith('>')) candidate = candidate.slice(1, -1);
+
+            const info = getMediaInfo(candidate);
+            if (!info || openedFence) return [line];
+
+            const index = media.push(info) - 1;
+            return ['', `<div data-dico-media-index="${index}"></div>`, ''];
+        }).join('\n');
+
+        const rendered = window.marked.parse(prepared, { gfm: true, breaks: true });
+        preview.innerHTML = window.DOMPurify.sanitize(rendered, {
+            ADD_ATTR: ['data-dico-media-index']
+        });
+
+        preview.querySelectorAll('[data-dico-media-index]').forEach((placeholder) => {
+            const info = media[Number(placeholder.dataset.dicoMediaIndex)];
+            if (info) placeholder.replaceWith(createMediaElement(info));
+        });
+
+        if (!preview.innerHTML.trim()) {
+            preview.innerHTML = '<p class="text-base-content/45">미리볼 내용이 없습니다.</p>';
+        }
+        return true;
+    }
+
+    async function renderPreview() {
+        previewController?.abort();
+        const controller = new AbortController();
+        previewController = controller;
+
+        if (renderPreviewWithCdn()) return;
+
+        preview.innerHTML = '<div class="flex min-h-40 items-center justify-center"><span class="loading loading-spinner loading-sm"></span></div>';
+
+        const body = new FormData();
+        body.append('csrf_token', csrfToken);
+        body.append('content', contentInput.value);
+
+        try {
+            const response = await fetch(previewUrl, {
+                method: 'POST',
+                body,
+                headers: { 'Accept': 'application/json' },
+                signal: controller.signal
+            });
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || '미리보기를 불러오지 못했습니다.');
+            }
+
+            preview.innerHTML = data.html || '<p class="text-base-content/45">미리볼 내용이 없습니다.</p>';
+        } catch (error) {
+            if (error.name === 'AbortError') return;
+            preview.textContent = error.message || '미리보기를 불러오지 못했습니다.';
+        }
+    }
+
+    function setPreviewMode(enabled) {
+        previewMode = enabled;
+        contentInput.classList.toggle('hidden', enabled);
+        toolbar.classList.toggle('hidden', enabled);
+        preview.classList.toggle('hidden', !enabled);
+        writeTab.classList.toggle('tab-active', !enabled);
+        previewTab.classList.toggle('tab-active', enabled);
+
+        if (enabled) {
+            renderPreview();
+        } else {
+            previewController?.abort();
+            contentInput.focus();
+        }
+    }
+
+    function replaceSelection(prefix, suffix = '', placeholder = '') {
+        const start = contentInput.selectionStart;
+        const end = contentInput.selectionEnd;
+        const selected = contentInput.value.slice(start, end) || placeholder;
+        contentInput.setRangeText(`${prefix}${selected}${suffix}`, start, end, 'end');
+        contentInput.dispatchEvent(new Event('input', { bubbles: true }));
+        contentInput.focus();
+    }
+
+    toolbar.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-markdown]');
+        if (!button) return;
+
+        const action = button.dataset.markdown;
+        if (action === 'bold') replaceSelection('**', '**', '굵은 글씨');
+        if (action === 'heading') replaceSelection('## ', '', '제목');
+        if (action === 'quote') replaceSelection('> ', '', '인용문');
+        if (action === 'list') replaceSelection('- ', '', '목록 항목');
+        if (action === 'link') replaceSelection('[', '](https://)', '링크 이름');
+        if (action === 'code') replaceSelection('```\n', '\n```', '코드');
+    });
+
+    writeTab.addEventListener('click', () => setPreviewMode(false));
+    previewTab.addEventListener('click', () => setPreviewMode(true));
+    contentInput.addEventListener('input', () => {
+        updateCount();
+        if (previewMode) {
+            window.clearTimeout(previewTimer);
+            previewTimer = window.setTimeout(renderPreview, 250);
+        }
+    });
+    updateCount();
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const button = form.querySelector('button[type="submit"]');
+        button.disabled = true;
+        button.classList.add('loading');
+
+        try {
+            const response = await fetch(form.action, {
+                method: 'POST',
+                body: new FormData(form),
+                headers: { 'Accept': 'application/json' }
+            });
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                window.alert(data.message || '게시글을 등록하지 못했습니다.');
+                return;
+            }
+
+            await window.appNavigate(data.redirect);
+        } catch (error) {
+            window.alert('서버와 통신하지 못했습니다.');
+        } finally {
+            button.disabled = false;
+            button.classList.remove('loading');
+        }
+    });
+})();
+</script>
+{% endblock %}

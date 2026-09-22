@@ -1,0 +1,537 @@
+{% set notification_items = notifications | default([], true) %}
+{% set initial_unread_count = unread_count | default(notification_items | rejectattr('is_read') | list | length) %}
+
+<header class="w-full border-b border-base-200 bg-base-100">
+    <div class="navbar mx-auto min-h-16 w-full max-w-7xl px-4">
+        <div class="grid w-full grid-cols-[1fr_auto_1fr] items-center">
+            <div class="justify-self-start">
+                <a href="/" class="flex items-center gap-2 text-xl font-bold">
+                    <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-primary font-bold text-primary-content">D</div>
+                    <span>Dico.page</span>
+                    <span class="text-xs font-normal text-base-content/40">게시판</span>
+                </a>
+            </div>
+
+            <nav class="hidden h-16 items-center md:flex"></nav>
+
+            <div class="flex items-center gap-3 justify-self-end">
+                {% if current_user | default(none) %}
+                <div id="notification-root" class="dropdown dropdown-end" data-stream-url="/api/notifications/stream">
+                    <button type="button" tabindex="0" class="btn btn-circle btn-ghost relative" aria-label="알림">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5">
+                            <path d="M10.268 21a2 2 0 0 0 3.464 0" />
+                            <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" />
+                        </svg>
+                        <span id="notification-badge" data-count="{{ initial_unread_count }}" class="absolute -right-1 -top-1 min-w-5 items-center justify-center rounded-full bg-error px-1 text-xs font-bold text-white {% if initial_unread_count > 0 %}flex{% else %}hidden{% endif %}">
+                            {% if initial_unread_count > 99 %}99+{% else %}{{ initial_unread_count }}{% endif %}
+                        </span>
+                    </button>
+
+                    <div tabindex="-1" class="dropdown-content z-50 mt-3 w-[420px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-base-200 bg-base-100 shadow-xl">
+                        <div class="flex h-14 items-center border-b border-base-200">
+                            <div class="flex h-full flex-1">
+                                <button type="button" class="notification-tab relative flex-1 text-sm font-medium text-primary" data-tab="all">
+                                    전체
+                                    <span class="notification-tab-line absolute bottom-0 left-1/2 h-0.5 w-16 -translate-x-1/2 bg-primary"></span>
+                                </button>
+                                <button type="button" class="notification-tab relative flex-1 text-sm text-base-content/60" data-tab="notice">
+                                    소식
+                                    <span class="notification-tab-line absolute bottom-0 left-1/2 hidden h-0.5 w-16 -translate-x-1/2 bg-primary"></span>
+                                </button>
+                                <button type="button" class="notification-tab relative flex-1 text-sm text-base-content/60" data-tab="activity">
+                                    활동
+                                    <span class="notification-tab-line absolute bottom-0 left-1/2 hidden h-0.5 w-16 -translate-x-1/2 bg-primary"></span>
+                                </button>
+                                <button type="button" class="notification-tab relative flex-1 text-sm text-base-content/60" data-tab="benefit">
+                                    혜택
+                                    <span class="notification-tab-line absolute bottom-0 left-1/2 hidden h-0.5 w-16 -translate-x-1/2 bg-primary"></span>
+                                </button>
+                            </div>
+
+                            <a href="/settings/notifications" class="btn btn-circle btn-ghost btn-sm mr-2" aria-label="알림 설정">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5">
+                                    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                                    <circle cx="12" cy="12" r="3" />
+                                </svg>
+                            </a>
+                        </div>
+
+                        <div id="notification-list" class="max-h-[600px] overflow-y-auto">
+                            <div id="notification-toolbar" class="sticky top-0 z-10 flex items-center justify-between border-b border-base-200 bg-base-100 px-4 py-3 {% if not notification_items %}hidden{% endif %}">
+                                <span id="notification-result-count" class="text-xs text-base-content/50">{{ notification_items | length }}개의 알림</span>
+                                <div class="dropdown dropdown-end">
+                                    <button type="button" tabindex="0" class="btn btn-ghost btn-sm gap-1 font-normal text-base-content/60">
+                                        <span id="notification-sort-label">최신순</span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-4"><path d="m6 9 6 6 6-6" /></svg>
+                                    </button>
+                                    <ul tabindex="-1" class="menu dropdown-content z-[100] mt-1 w-32 rounded-box border border-base-200 bg-base-100 p-2 shadow-lg">
+                                        <li><button type="button" class="notification-sort-option" data-sort="newest">최신순</button></li>
+                                        <li><button type="button" class="notification-sort-option" data-sort="oldest">오래된순</button></li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <div id="notification-groups" class="px-4 pb-4"></div>
+
+                            <div id="notification-source" class="hidden">
+                                {% for notification in notification_items %}
+                                <a href="{{ notification.url | default('#') }}" data-notification-id="{{ notification.id | default('') }}" data-category="{{ notification.category | default('notice') }}" data-created-at="{{ notification.created_at }}" data-is-read="{{ 'true' if notification.is_read else 'false' }}" class="notification-item group flex gap-3 rounded-xl bg-base-200/60 p-3 transition hover:bg-base-200">
+                                    <div class="relative shrink-0">
+                                        {% if notification.image %}
+                                        <img src="{{ notification.image }}" alt="" class="size-11 rounded-full object-cover">
+                                        {% else %}
+                                        <div class="flex size-11 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">{{ notification.sender | default('D') | first }}</div>
+                                        {% endif %}
+                                        {% if not notification.is_read %}
+                                        <span class="notification-unread-dot absolute -bottom-0.5 -right-0.5 size-4 rounded-full border-2 border-base-100 bg-primary"></span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <p class="line-clamp-2 text-sm leading-5 text-base-content">{{ notification.message }}</p>
+                                        <p class="notification-time mt-1 text-xs text-base-content/40">{{ notification.created_at }}</p>
+                                    </div>
+                                </a>
+                                {% endfor %}
+                            </div>
+
+                            <div id="notification-empty" class="hidden min-h-[340px] flex-col items-center justify-center px-4 text-center">
+                                <div class="mb-4 flex size-14 items-center justify-center rounded-full bg-base-200">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="size-7 text-base-content/30">
+                                        <path d="M10.268 21a2 2 0 0 0 3.464 0" />
+                                        <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" />
+                                    </svg>
+                                </div>
+                                <p id="notification-empty-title" class="text-sm font-semibold">새로운 알림이 없습니다.</p>
+                                <p class="mt-1 text-xs text-base-content/40">새로운 소식이 생기면 여기에서 알려드릴게요.</p>
+                            </div>
+                        </div>
+
+                        <div id="notification-footer" class="border-t border-base-200 bg-base-100 {% if not notification_items %}hidden{% endif %}">
+                            <div id="notification-limit-info" class="{% if total_notification_count | default(0) <= visible_notification_count | default(notification_items | length) %}hidden{% endif %} border-b border-base-200 px-4 py-3 text-center">
+                                <p class="text-xs text-base-content/40">전체 <span id="notification-total-count">{{ total_notification_count | default(notification_items | length) }}</span>개 중 최근 <span id="notification-visible-count">{{ visible_notification_count | default(notification_items | length) }}</span>개를 표시하고 있습니다.</p>
+                            </div>
+                            <div class="flex gap-1 p-2">
+                                <button id="notification-read-all" type="button" class="btn btn-ghost btn-sm flex-1">모든 알림 읽음 처리</button>
+                                <a href="/notifications" class="btn btn-ghost btn-sm flex-1 text-primary">모든 알림 보기</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dropdown dropdown-end">
+                    <button type="button" tabindex="0" class="btn btn-circle btn-ghost bg-primary/10 text-primary">
+                        {{ current_user.nickname | first }}
+                    </button>
+                    <ul tabindex="-1" class="menu dropdown-content z-50 mt-3 w-52 rounded-box border border-base-200 bg-base-100 p-2 shadow">
+                        <li><a href="/users/{{ current_user.user_uid }}">프로필</a></li>
+                        <li><a href="#">메시지</a></li>
+                        <li class="my-1 px-2"><div class="h-px w-full bg-black/30 p-0"></div></li>
+                        {% if current_user.role == 'admin' %}
+                        <li><a href="{{ url_for('admin.dashboard') }}" class="font-medium text-primary">관리자 페이지</a></li>
+                        {% endif %}
+                        <li><a href="#">설정</a></li>
+                        <li class="my-1 border-t border-base-200"></li>
+                        <li>
+                            <button id="logout-button" type="submit" form="logout-form">로그아웃</button>
+                        </li>
+                    </ul>
+
+                    <form id="logout-form" action="{{ url_for('auth.logout') }}" method="post" class="hidden">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    </form>
+                </div>
+                {% else %}
+                <a href="{{ url_for('auth.login') }}" class="btn btn-ghost btn-sm">로그인</a>
+                <a href="{{ url_for('auth.register') }}" class="btn btn-primary btn-sm">회원가입</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</header>
+
+<script>
+(() => {
+    function initializeLogout() {
+        const form = document.getElementById('logout-form');
+        const button = document.getElementById('logout-button');
+
+        if (!form || form.dataset.initialized === 'true') return;
+        form.dataset.initialized = 'true';
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            button.disabled = true;
+
+            try {
+                const response = await fetch(form.action, {
+                    method: 'POST',
+                    body: new FormData(form),
+                    headers: { 'Accept': 'application/json' }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`로그아웃 실패: ${response.status}`);
+                }
+
+                if (response.redirected) {
+                    window.location.replace(response.url);
+                    return;
+                }
+
+                const data = await response.json();
+                window.location.replace(data.redirect || '/');
+            } catch (error) {
+                console.error('[인증] 로그아웃 실패', error);
+                button.disabled = false;
+                window.alert('로그아웃하지 못했습니다. 다시 시도해 주세요.');
+            }
+        });
+    }
+
+    function initializeNotifications() {
+        const root = document.getElementById('notification-root');
+        if (!root || root.dataset.initialized === 'true') return;
+        root.dataset.initialized = 'true';
+
+        const tabs = root.querySelectorAll('.notification-tab');
+        const source = document.getElementById('notification-source');
+        const groupsElement = document.getElementById('notification-groups');
+        const emptyElement = document.getElementById('notification-empty');
+        const emptyTitle = document.getElementById('notification-empty-title');
+        const toolbar = document.getElementById('notification-toolbar');
+        const footer = document.getElementById('notification-footer');
+        const resultCount = document.getElementById('notification-result-count');
+        const badge = document.getElementById('notification-badge');
+        const sortLabel = document.getElementById('notification-sort-label');
+        const sortOptions = root.querySelectorAll('.notification-sort-option');
+        const readAllButton = document.getElementById('notification-read-all');
+        const totalCount = document.getElementById('notification-total-count');
+        const visibleCount = document.getElementById('notification-visible-count');
+        const limitInfo = document.getElementById('notification-limit-info');
+
+        let notifications = Array.from(source.querySelectorAll('.notification-item'));
+        let currentCategory = 'all';
+        let currentSort = 'newest';
+        let eventSource = null;
+        let baseDocumentTitle = document.title.replace(/^\(\d+\+?\)\s*/, '');
+
+        function updateDocumentTitle(count) {
+            const value = Math.max(0, Number(count) || 0);
+            const countText = value > 99 ? '99+' : String(value);
+            document.title = value > 0 ? `(${countText}) ${baseDocumentTitle}` : baseDocumentTitle;
+        }
+
+        window.addEventListener('app:title-change', (event) => {
+            baseDocumentTitle = String(event.detail?.title || document.title).replace(/^\(\d+\+?\)\s*/, '');
+            updateDocumentTitle(badge.dataset.count);
+        });
+
+        function parseDate(value) {
+            if (!value) return null;
+            const date = new Date(value.trim().replace(' ', 'T'));
+            return Number.isNaN(date.getTime()) ? null : date;
+        }
+
+        function startOfDay(date) {
+            const result = new Date(date);
+            result.setHours(0, 0, 0, 0);
+            return result;
+        }
+
+        function dayDifference(date) {
+            return Math.floor((startOfDay(new Date()) - startOfDay(date)) / 86400000);
+        }
+
+        function relativeTime(date) {
+            const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+            if (seconds < 60) return '방금 전';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간 전`;
+            const days = dayDifference(date);
+            if (days === 1) return '어제';
+            if (days < 7) return `${days}일 전`;
+            if (days < 30) return `${Math.floor(days / 7)}주 전`;
+            if (days < 365) return `${Math.floor(days / 30)}개월 전`;
+            return `${Math.floor(days / 365)}년 전`;
+        }
+
+        function dateGroup(date) {
+            const difference = dayDifference(date);
+            if (difference <= 0) return { key: 'today', label: '오늘' };
+            if (difference === 1) return { key: 'yesterday', label: '어제' };
+            if (difference < 7) return { key: 'week', label: '최근 7일' };
+            if (difference < 30) return { key: 'month', label: '최근 30일' };
+            return { key: 'old', label: '이전' };
+        }
+
+        function setBadge(count) {
+            const value = Math.max(0, Number(count) || 0);
+            badge.dataset.count = String(value);
+            badge.textContent = value > 99 ? '99+' : String(value);
+            badge.classList.toggle('hidden', value === 0);
+            badge.classList.toggle('flex', value > 0);
+            updateDocumentTitle(value);
+        }
+
+        function updateLayout() {
+            const hasItems = notifications.length > 0;
+            toolbar.classList.toggle('hidden', !hasItems);
+            footer.classList.toggle('hidden', !hasItems);
+            if (visibleCount) visibleCount.textContent = String(notifications.length);
+            if (totalCount) totalCount.textContent = String(Math.max(Number(totalCount.textContent) || 0, notifications.length));
+            if (limitInfo && totalCount) limitInfo.classList.toggle('hidden', Number(totalCount.textContent) <= notifications.length);
+        }
+
+        function renderNotifications() {
+            const filtered = notifications
+                .filter((item) => currentCategory === 'all' || item.dataset.category === currentCategory)
+                .sort((a, b) => {
+                    const aTime = parseDate(a.dataset.createdAt)?.getTime() || 0;
+                    const bTime = parseDate(b.dataset.createdAt)?.getTime() || 0;
+                    return currentSort === 'oldest' ? aTime - bTime : bTime - aTime;
+                });
+
+            resultCount.textContent = `${filtered.length}개의 알림`;
+            groupsElement.replaceChildren();
+            updateLayout();
+
+            if (filtered.length === 0) {
+                emptyTitle.textContent = notifications.length === 0 ? '새로운 알림이 없습니다.' : '해당 알림이 없습니다.';
+                emptyElement.classList.remove('hidden');
+                emptyElement.classList.add('flex');
+                return;
+            }
+
+            emptyElement.classList.add('hidden');
+            emptyElement.classList.remove('flex');
+
+            const grouped = new Map();
+            filtered.forEach((item) => {
+                const group = dateGroup(parseDate(item.dataset.createdAt) || new Date(0));
+                if (!grouped.has(group.key)) grouped.set(group.key, { label: group.label, items: [] });
+                grouped.get(group.key).items.push(item);
+            });
+
+            const order = currentSort === 'oldest'
+                ? ['old', 'month', 'week', 'yesterday', 'today']
+                : ['today', 'yesterday', 'week', 'month', 'old'];
+
+            order.forEach((key) => {
+                const group = grouped.get(key);
+                if (!group) return;
+
+                const section = document.createElement('section');
+                section.className = 'notification-group pt-4';
+                const title = document.createElement('p');
+                title.className = 'mb-2 text-sm font-medium text-base-content/60';
+                title.textContent = group.label;
+                const list = document.createElement('div');
+                list.className = 'space-y-2';
+
+                group.items.forEach((original) => {
+                    const item = original.cloneNode(true);
+                    const date = parseDate(item.dataset.createdAt);
+                    const time = item.querySelector('.notification-time');
+                    if (date && time) {
+                        time.textContent = relativeTime(date);
+                        time.title = new Intl.DateTimeFormat('ko-KR', {
+                            year: 'numeric', month: '2-digit', day: '2-digit',
+                            hour: '2-digit', minute: '2-digit'
+                        }).format(date);
+                    }
+                    list.appendChild(item);
+                });
+
+                section.append(title, list);
+                groupsElement.appendChild(section);
+            });
+        }
+
+        function createNotificationElement(notification) {
+            const item = document.createElement('a');
+            item.href = notification.url || '#';
+            item.dataset.notificationId = notification.id || '';
+            item.dataset.category = notification.category || 'notice';
+            item.dataset.createdAt = notification.created_at || new Date().toISOString();
+            item.dataset.isRead = String(notification.is_read === true);
+            item.className = 'notification-item group flex gap-3 rounded-xl bg-base-200/60 p-3 transition hover:bg-base-200';
+
+            const avatarWrapper = document.createElement('div');
+            avatarWrapper.className = 'relative shrink-0';
+            if (notification.image) {
+                const image = document.createElement('img');
+                image.src = notification.image;
+                image.alt = '';
+                image.className = 'size-11 rounded-full object-cover';
+                avatarWrapper.appendChild(image);
+            } else {
+                const avatar = document.createElement('div');
+                avatar.className = 'flex size-11 items-center justify-center rounded-full bg-primary/10 font-bold text-primary';
+                avatar.textContent = String(notification.sender || 'D').charAt(0);
+                avatarWrapper.appendChild(avatar);
+            }
+
+            if (notification.is_read !== true) {
+                const dot = document.createElement('span');
+                dot.className = 'notification-unread-dot absolute -bottom-0.5 -right-0.5 size-4 rounded-full border-2 border-base-100 bg-primary';
+                avatarWrapper.appendChild(dot);
+            }
+
+            const content = document.createElement('div');
+            content.className = 'min-w-0 flex-1';
+            const message = document.createElement('p');
+            message.className = 'line-clamp-2 text-sm leading-5 text-base-content';
+            message.textContent = notification.message || '새 알림이 도착했습니다.';
+            const time = document.createElement('p');
+            time.className = 'notification-time mt-1 text-xs text-base-content/40';
+            time.textContent = notification.created_at || '방금 전';
+            content.append(message, time);
+            item.append(avatarWrapper, content);
+            return item;
+        }
+
+        function openNotificationUrl(href) {
+            if (!href || href === '#') return;
+
+            const url = new URL(href, window.location.href);
+            if (url.origin === window.location.origin && typeof window.appNavigate === 'function') {
+                window.appNavigate(url.href);
+                return;
+            }
+
+            window.location.assign(url.href);
+        }
+
+        function applyReadState(notificationId, unreadCount) {
+            notifications.forEach((item) => {
+                if (item.dataset.notificationId !== notificationId) return;
+                item.dataset.isRead = 'true';
+                item.querySelector('.notification-unread-dot')?.remove();
+            });
+
+            setBadge(unreadCount);
+            renderNotifications();
+        }
+
+        tabs.forEach((tab) => {
+            tab.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                currentCategory = tab.dataset.tab;
+                tabs.forEach((item) => {
+                    const active = item === tab;
+                    item.classList.toggle('text-primary', active);
+                    item.classList.toggle('font-medium', active);
+                    item.classList.toggle('text-base-content/60', !active);
+                    item.querySelector('.notification-tab-line')?.classList.toggle('hidden', !active);
+                });
+                renderNotifications();
+            });
+        });
+
+        sortOptions.forEach((button) => {
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                currentSort = button.dataset.sort;
+                sortLabel.textContent = currentSort === 'oldest' ? '오래된순' : '최신순';
+                renderNotifications();
+            });
+        });
+
+        groupsElement.addEventListener('click', async (event) => {
+            const item = event.target.closest('.notification-item');
+            if (!item) return;
+
+            const notificationId = item.dataset.notificationId;
+            const href = item.getAttribute('href');
+
+            if (!notificationId || item.dataset.isRead === 'true') {
+                if (href === '#') event.preventDefault();
+                return;
+            }
+
+            event.preventDefault();
+            if (item.dataset.readPending === 'true') return;
+            item.dataset.readPending = 'true';
+
+            try {
+                const response = await fetch(`/api/notifications/${encodeURIComponent(notificationId)}/read`, {
+                    method: 'POST',
+                    headers: { 'Accept': 'application/json' }
+                });
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || '알림을 읽음 처리하지 못했습니다.');
+                }
+
+                applyReadState(notificationId, data.unread_count);
+            } catch (error) {
+                console.error('[알림] 개별 읽음 처리 실패', error);
+            } finally {
+                item.dataset.readPending = 'false';
+                openNotificationUrl(href);
+            }
+        });
+
+        readAllButton.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/api/notifications/read-all', {
+                    method: 'POST',
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (!response.ok) return;
+                notifications.forEach((item) => {
+                    item.dataset.isRead = 'true';
+                    item.querySelector('.notification-unread-dot')?.remove();
+                });
+                setBadge(0);
+                renderNotifications();
+            } catch (error) {
+                console.error('[알림] 읽음 처리 실패', error);
+            }
+        });
+
+        setBadge(badge.dataset.count);
+        renderNotifications();
+        window.setInterval(renderNotifications, 60000);
+
+        if ('EventSource' in window) {
+            eventSource = new EventSource(root.dataset.streamUrl);
+            eventSource.addEventListener('notification', (event) => {
+                try {
+                    const notification = JSON.parse(event.data);
+                    const duplicate = notification.id && notifications.some(
+                        (item) => item.dataset.notificationId === String(notification.id)
+                    );
+                    if (duplicate) return;
+
+                    const element = createNotificationElement(notification);
+                    source.prepend(element);
+                    notifications.unshift(element);
+                    if (notification.is_read !== true) setBadge(Number(badge.dataset.count) + 1);
+                    if (totalCount) totalCount.textContent = String((Number(totalCount.textContent) || 0) + 1);
+                    renderNotifications();
+                } catch (error) {
+                    console.error('[알림] 실시간 알림 처리 실패', error);
+                }
+            });
+        }
+
+        window.addEventListener('pagehide', () => {
+            eventSource?.close();
+        }, { once: true });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeLogout();
+            initializeNotifications();
+        }, { once: true });
+    } else {
+        initializeLogout();
+        initializeNotifications();
+    }
+})();
+</script>

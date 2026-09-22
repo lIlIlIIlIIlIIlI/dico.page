@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}페이지를 찾을 수 없습니다 | Dico.page{% endblock %}
+
+{% block content %}
+<section class="min-h-[calc(100vh-4rem)] bg-base-200/60" data-async-page>
+    <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:py-8">
+        {% include "layout/sidebar.html" %}
+
+        <div class="min-w-0">
+            <div class="flex justify-center">
+                <section class="w-full max-w-5xl rounded-3xl border border-base-300 bg-base-100 p-8 text-center shadow-sm sm:p-12">
+                    <!-- <div class="mx-auto flex size-20 items-center justify-center rounded-3xl bg-primary/10 text-4xl font-black text-primary">
+                        404
+                    </div> -->
+
+                    <p class="mt-7 text-sm font-semibold uppercase tracking-[0.2em] text-primary">Page not found</p>
+                    <h1 class="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">페이지를 찾을 수 없습니다</h1>
+                    <!-- <p class="mx-auto mt-4 max-w-md leading-7 text-base-content/60">
+                        요청하신 페이지가 삭제되었거나 주소가 변경되었을 수 있습니다.<br>
+                        주소를 확인하거나 홈으로 이동해 주세요.
+                    </p> -->
+
+                    {% if requested_path %}
+                    <p class="mt-5 truncate rounded-xl bg-base-200 px-4 py-3 text-xs text-base-content/45" title="{{ requested_path }}">
+                        요청하신 페이지가 삭제되었거나 관리자에 의해 삭제되었을 수 있습니다.<br>
+                        주소를 확인하거나 홈으로 이동해 주세요.
+                    </p>
+                    {% endif %}
+
+                    <div class="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+                        <button type="button" class="btn btn-ghost" onclick="history.back()">이전 페이지</button>
+                        <a href="{{ url_for('home.index') }}" class="btn btn-primary">홈으로 이동</a>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+
+{% block title %}회원 관리 | Dico.page{% endblock %}
+
+{% block content %}
+<section class="min-h-[calc(100vh-4rem)] bg-base-200">
+    <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
+        {% include "admin/sidebar.html" %}
+
+        <div class="min-w-0">
+            <div class="mb-6">
+                <h1 class="text-2xl font-bold">회원 관리</h1>
+                <p class="mt-1 text-sm text-base-content/60">회원 검색과 관리자 권한 설정을 할 수 있습니다.</p>
+            </div>
+
+            {% if updated %}
+            <div role="alert" class="alert alert-success mb-4">
+                <span>회원 권한을 변경했습니다.</span>
+            </div>
+            {% endif %}
+
+            {% if error == 'self_demotion' %}
+            <div role="alert" class="alert alert-error mb-4">
+                <span>현재 로그인한 관리자의 권한은 직접 해제할 수 없습니다.</span>
+            </div>
+            {% endif %}
+
+            <div id="admin-live-message" role="alert" class="alert mb-4 hidden">
+                <span></span>
+            </div>
+
+            <section class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+                <form id="admin-user-search" method="get" action="{{ url_for('admin.users') }}" class="flex flex-col gap-2 border-b border-base-300 p-4 sm:flex-row">
+                    <input id="admin-user-search-input" type="search" name="q" value="{{ search }}" class="input input-bordered min-w-0 flex-1" placeholder="이메일, 닉네임 또는 UID 검색">
+                    <button type="submit" class="btn btn-primary">검색</button>
+                    <button id="admin-user-search-clear" type="button" class="btn btn-ghost {% if not search %}hidden{% endif %}">초기화</button>
+                </form>
+
+                <div class="overflow-x-auto">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>회원</th>
+                                <th>UID</th>
+                                <th>가입일</th>
+                                <th>최근 로그인</th>
+                                <th class="text-right">권한</th>
+                            </tr>
+                        </thead>
+                        <tbody id="admin-user-list">
+                            {% if user_items is none %}
+                            <tr>
+                                <td colspan="5" class="py-12 text-center text-base-content/50">
+                                    <span class="loading loading-spinner loading-sm mr-2 align-middle"></span>
+                                    회원 목록을 불러오는 중입니다.
+                                </td>
+                            </tr>
+                            {% else %}
+                            {% for user in user_items %}
+                            <tr>
+                                <td>
+                                    <p class="font-medium">{{ user.nickname }}</p>
+                                    <p class="text-xs text-base-content/50">{{ user.email }}</p>
+                                </td>
+                                <td class="max-w-36 truncate font-mono text-xs" title="{{ user.user_uid }}">{{ user.user_uid }}</td>
+                                <td class="whitespace-nowrap">{{ user.created_at[:10] }}</td>
+                                <td class="whitespace-nowrap text-base-content/60">{{ user.last_login_at[:10] if user.last_login_at else '-' }}</td>
+                                <td>
+                                    <form method="post" action="{{ url_for('admin.update_user_role', user_id=user.id) }}" class="admin-role-form flex justify-end gap-2">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                        <select name="role" class="select select-bordered select-sm">
+                                            <option value="user" {% if user.role == 'user' %}selected{% endif %}>일반 사용자</option>
+                                            <option value="admin" {% if user.role == 'admin' %}selected{% endif %}>관리자</option>
+                                        </select>
+                                        <button type="submit" class="btn btn-sm">저장</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="py-12 text-center text-base-content/50">검색된 회원이 없습니다.</td>
+                            </tr>
+                            {% endfor %}
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const searchForm = document.getElementById('admin-user-search');
+    const searchInput = document.getElementById('admin-user-search-input');
+    const clearButton = document.getElementById('admin-user-search-clear');
+    const userList = document.getElementById('admin-user-list');
+    const liveMessage = document.getElementById('admin-live-message');
+    const liveMessageText = liveMessage.querySelector('span');
+    const usersUrl = {{ url_for('admin.users_data') | tojson }};
+    const streamUrl = {{ url_for('admin.admin_stream') | tojson }};
+    const roleUrlTemplate = {{ url_for('admin.update_user_role', user_id=0) | tojson }};
+    const csrfToken = {{ csrf_token | tojson }};
+    let searchTimer = null;
+    let usersRequestController = null;
+    let eventSource = null;
+
+    function createElement(tagName, className = '', text = '') {
+        const element = document.createElement(tagName);
+        element.className = className;
+        element.textContent = text;
+        return element;
+    }
+
+    function showMessage(message, type = 'success') {
+        liveMessage.className = `alert mb-4 ${type === 'error' ? 'alert-error' : 'alert-success'}`;
+        liveMessageText.textContent = message;
+
+        window.setTimeout(() => {
+            liveMessage.classList.add('hidden');
+        }, 3000);
+    }
+
+    function createUserRow(user) {
+        const row = document.createElement('tr');
+        row.dataset.userId = user.id;
+
+        const userCell = document.createElement('td');
+        userCell.append(
+            createElement('p', 'font-medium', user.nickname),
+            createElement('p', 'text-xs text-base-content/50', user.email)
+        );
+
+        const uidCell = createElement('td', 'max-w-36 truncate font-mono text-xs', user.user_uid);
+        uidCell.title = user.user_uid;
+
+        const createdCell = createElement('td', 'whitespace-nowrap', String(user.created_at || '').slice(0, 10));
+        const loginCell = createElement('td', 'whitespace-nowrap text-base-content/60', user.last_login_at ? String(user.last_login_at).slice(0, 10) : '-');
+        const roleCell = document.createElement('td');
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = roleUrlTemplate.replace(/0\/role$/, `${user.id}/role`);
+        form.className = 'admin-role-form flex justify-end gap-2';
+
+        const csrf = document.createElement('input');
+        csrf.type = 'hidden';
+        csrf.name = 'csrf_token';
+        csrf.value = csrfToken;
+
+        const select = document.createElement('select');
+        select.name = 'role';
+        select.className = 'select select-bordered select-sm';
+
+        const userOption = new Option('일반 사용자', 'user', false, user.role === 'user');
+        const adminOption = new Option('관리자', 'admin', false, user.role === 'admin');
+        select.add(userOption);
+        select.add(adminOption);
+
+        const button = createElement('button', 'btn btn-sm', '저장');
+        button.type = 'submit';
+        form.append(csrf, select, button);
+        roleCell.appendChild(form);
+        row.append(userCell, uidCell, createdCell, loginCell, roleCell);
+        return row;
+    }
+
+    function renderUsers(users) {
+        userList.replaceChildren();
+
+        if (users.length === 0) {
+            const row = document.createElement('tr');
+            const cell = createElement('td', 'py-12 text-center text-base-content/50', '검색된 회원이 없습니다.');
+            cell.colSpan = 5;
+            row.appendChild(cell);
+            userList.appendChild(row);
+            return;
+        }
+
+        users.forEach((user) => userList.appendChild(createUserRow(user)));
+    }
+
+    async function loadUsers() {
+        const query = searchInput.value.trim();
+        const url = new URL(usersUrl, window.location.origin);
+        if (query) url.searchParams.set('q', query);
+
+        usersRequestController?.abort();
+        const controller = new AbortController();
+        usersRequestController = controller;
+        userList.setAttribute('aria-busy', 'true');
+
+        try {
+            const response = await fetch(url, {
+                headers: { 'Accept': 'application/json' },
+                signal: controller.signal
+            });
+
+            if (!response.ok) return;
+
+            const data = await response.json();
+            renderUsers(data.users);
+            clearButton.classList.toggle('hidden', query.length === 0);
+
+            const browserUrl = new URL(window.location.href);
+            if (query) browserUrl.searchParams.set('q', query);
+            else browserUrl.searchParams.delete('q');
+            window.history.replaceState({}, '', browserUrl);
+        } catch (error) {
+            if (error.name === 'AbortError') return;
+            console.error('[관리자] 회원 목록 갱신 실패', error);
+        } finally {
+            if (usersRequestController === controller) {
+                userList.removeAttribute('aria-busy');
+            }
+        }
+    }
+
+    searchForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        loadUsers();
+    });
+
+    searchInput.addEventListener('input', () => {
+        window.clearTimeout(searchTimer);
+        searchTimer = window.setTimeout(loadUsers, 250);
+    });
+
+    clearButton.addEventListener('click', () => {
+        searchInput.value = '';
+        loadUsers();
+        searchInput.focus();
+    });
+
+    userList.addEventListener('submit', async (event) => {
+        const form = event.target.closest('.admin-role-form');
+        if (!form) return;
+
+        event.preventDefault();
+        const button = form.querySelector('button[type="submit"]');
+        button.disabled = true;
+        button.classList.add('loading');
+
+        try {
+            const response = await fetch(form.action, {
+                method: 'POST',
+                body: new FormData(form),
+                headers: { 'Accept': 'application/json' }
+            });
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                showMessage(data.message || '권한을 변경하지 못했습니다.', 'error');
+                return;
+            }
+
+            showMessage(data.message);
+            await loadUsers();
+        } catch (error) {
+            showMessage('서버와 통신하지 못했습니다.', 'error');
+        } finally {
+            button.disabled = false;
+            button.classList.remove('loading');
+        }
+    });
+
+    function connectAdminStream() {
+        if (!('EventSource' in window) || eventSource) return;
+
+        eventSource = new EventSource(streamUrl);
+        eventSource.addEventListener('user-created', loadUsers);
+        eventSource.addEventListener('user-role-updated', loadUsers);
+        eventSource.addEventListener('admin-access-revoked', (event) => {
+            const data = JSON.parse(event.data);
+            window.location.href = data.redirect || '/';
+        });
+    }
+
+    window.addEventListener('pagehide', () => {
+        usersRequestController?.abort();
+        eventSource?.close();
+    }, { once: true });
+
+    loadUsers().finally(connectAdminStream);
+})();
+</script>
+{% endblock %}

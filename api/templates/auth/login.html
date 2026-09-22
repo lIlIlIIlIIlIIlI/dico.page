@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}로그인 | Dico.page{% endblock %}
+
+{% block content %}
+<section class="flex min-h-[calc(100vh-4rem)] items-center justify-center bg-base-200 px-4 py-10">
+    <div class="w-full max-w-md rounded-2xl border border-base-300 bg-base-100 p-6 shadow-sm sm:p-8">
+        <div class="mb-7">
+            <h1 class="text-2xl font-bold">로그인</h1>
+            <p class="mt-2 text-sm text-base-content/60">Dico.page 계정으로 계속하세요.</p>
+        </div>
+
+        {% if error %}
+        <div role="alert" class="alert alert-error mb-5 text-sm">
+            <span>{{ error }}</span>
+        </div>
+        {% endif %}
+
+        <form method="post" action="{{ url_for('auth.login') }}" class="space-y-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="next" value="{{ next_url }}">
+
+            <label class="form-control block">
+                <span class="mb-2 block text-sm font-medium">이메일</span>
+                <input type="email" name="email" value="{{ email }}" class="input input-bordered w-full" placeholder="name@example.com" autocomplete="email" maxlength="254" required autofocus>
+            </label>
+
+            <label class="form-control block">
+                <span class="mb-2 block text-sm font-medium">비밀번호</span>
+                <input type="password" name="password" class="input input-bordered w-full" placeholder="비밀번호를 입력하세요" autocomplete="current-password" maxlength="128" required>
+            </label>
+
+            <label class="flex cursor-pointer items-center gap-2 text-sm text-base-content/70">
+                <input type="checkbox" name="remember" class="checkbox checkbox-primary checkbox-sm">
+                로그인 상태 유지
+            </label>
+
+            <button type="submit" class="btn btn-primary w-full">로그인</button>
+        </form>
+
+        <p class="mt-6 text-center text-sm text-base-content/60">
+            계정이 없으신가요?
+            <a href="{{ url_for('auth.register') }}" class="font-medium text-primary hover:underline">회원가입</a>
+        </p>
+    </div>
+</section>
+{% endblock %}

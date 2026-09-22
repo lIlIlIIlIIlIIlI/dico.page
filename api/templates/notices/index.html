@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}공지사항 | Dico.page{% endblock %}
+
+{% block content %}
+<section class="min-h-[calc(100vh-4rem)] bg-base-200/60" data-async-page>
+    <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:py-8">
+        {% include "layout/sidebar.html" %}
+
+
+        <div class="min-w-0">
+            <div class="breadcrumbs max-w-full py-0 text-sm text-base-content/50">
+                <ul>
+                    <li><a href="{{ url_for('home.index') }}">홈</a></li>
+                    <li>커뮤니티</li>
+                    <li>공지사항</li>
+                </ul>
+            </div>
+
+            <div class="mb-6 mt-3">
+                <h1 class="text-2xl font-bold">공지사항</h1>
+                <p class="mt-1 text-sm text-base-content/60">Dico.page의 새로운 소식과 중요 안내입니다.</p>
+            </div>
+
+            <section class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+                <div class="divide-y divide-base-300">
+                    {% for notice in notices %}
+                    <a href="{{ url_for('notifications.notice_detail', notice_id=notice.id) }}" class="flex items-center gap-3 p-5 transition hover:bg-base-200/60">
+                        {% if notice.is_pinned %}<span class="badge badge-primary badge-sm shrink-0">고정</span>{% endif %}
+                        <span class="min-w-0 flex-1 truncate font-medium">{{ notice.title }}</span>
+                        <span class="shrink-0 text-xs text-base-content/40">{{ notice.created_at[:10] }}</span>
+                    </a>
+                    {% else %}
+                    <div class="px-5 py-20 text-center text-base-content/50">등록된 공지가 없습니다.</div>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+    </div>
+</section>
+{% endblock %}

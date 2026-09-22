@@ -1,0 +1,21 @@
+<aside class="h-fit self-start rounded-2xl border border-base-300 bg-base-100 p-3 shadow-sm lg:sticky lg:top-20">
+    <p class="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-base-content/40">관리자</p>
+
+    <ul class="menu w-full gap-1 p-0">
+        <li>
+            <a href="{{ url_for('admin.dashboard') }}" class="active">
+                대시보드
+            </a>
+        </li>
+        <li>
+            <a href="{{ url_for('admin.users') }}">
+                회원 관리
+            </a>
+        </li>
+        <li>
+            <a href="{{ url_for('admin.notices') }}">
+                공지 관리
+            </a>
+        </li>
+    </ul>
+</aside>

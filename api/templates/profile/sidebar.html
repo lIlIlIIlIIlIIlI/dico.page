@@ -1,0 +1,37 @@
+        <aside class="h-fit min-h-[560px] overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm lg:sticky lg:top-24">
+            <div class="h-32 bg-gradient-to-br from-primary/80 via-secondary/60 to-accent/50"></div>
+            <div class="px-6 pb-6">
+                <div class="-mt-12 flex items-end justify-between">
+                    {% if profile.avatar_url %}
+                    <img src="{{ profile.avatar_url }}" alt="{{ profile.nickname }} 프로필 이미지" class="size-24 rounded-2xl border-4 border-base-100 object-cover shadow-md">
+                    {% else %}
+                    <div class="flex size-24 items-center justify-center rounded-2xl border-4 border-base-100 bg-primary text-4xl font-bold text-primary-content shadow-md">{{ profile.nickname | first }}</div>
+                    {% endif %}
+                    {% if is_own_profile %}<span class="badge badge-primary badge-outline mb-1">내 프로필</span>{% endif %}
+                </div>
+                <h1 class="mt-5 break-words text-2xl font-bold">{{ profile.nickname }}</h1>
+                <p class="mt-1 break-all font-mono text-xs text-base-content/45">@{{ profile.user_uid }}</p>
+                <p class="mt-4 min-h-10 whitespace-pre-wrap break-words text-sm leading-6 text-base-content/65">{{ profile.bio or '아직 소개가 없습니다.' }}</p>
+
+                <div class="mt-6 grid grid-cols-3 divide-x divide-base-300 rounded-xl border border-base-300 py-4 text-center">
+                    <div><p class="text-xl font-bold">{{ profile.posts_count }}</p><p class="text-xs text-base-content/45">작성글</p></div>
+                    <div><p class="text-xl font-bold">{{ profile.comments_count }}</p><p class="text-xs text-base-content/45">댓글</p></div>
+                    <div><p class="text-xl font-bold">{{ profile.likes_received }}</p><p class="text-xs text-base-content/45">받은 추천</p></div>
+                </div>
+
+                <div class="mt-4 flex flex-wrap gap-2">
+                    <span class="badge badge-ghost">{{ '관리자' if profile.role == 'admin' else '회원' }}</span>
+                    <span class="badge badge-ghost">{{ profile.created_at[:10] }} 가입</span>
+                </div>
+            </div>
+
+            <div class="border-t border-base-200 p-3">
+                <p class="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wider text-base-content/40">바로가기</p>
+                <ul class="menu w-full gap-1 p-0">
+                    <li><a href="{{ url_for('home.index') }}">전체 게시글</a></li>
+                    <li><a href="{{ url_for('home.index', category='general') }}">자유 게시판</a></li>
+                    <li><a href="{{ url_for('home.index', category='question') }}">질문 게시판</a></li>
+                    <li><a href="{{ url_for('notifications.notice_list') }}">공지사항</a></li>
+                </ul>
+            </div>
+        </aside>
