@@ -7,8 +7,8 @@ from uuid import uuid4
 from markupsafe import Markup
 from quart import Blueprint, abort, jsonify, make_response, render_template, request, session
 
-from .auth import ensure_database, login_required, validate_csrf_token
-from ...module.database import collection, next_id_sync, utc_now
+from routes.module.auth import ensure_database, login_required, validate_csrf_token
+from module.database import collection, next_id_sync, utc_now
 
 
 notification_bp = Blueprint("notifications", __name__)
