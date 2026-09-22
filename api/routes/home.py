@@ -16,9 +16,9 @@ except ImportError:
 
 from quart import Blueprint, abort, current_app, jsonify, redirect, render_template, request, session, url_for
 
-from .module.auth import ensure_database, login_required, validate_csrf_token
-from .module.notifications import create_notification, get_notices_sync
-from ..module.database import collection, next_id_sync, utc_now
+from routes.module.auth import ensure_database, login_required, validate_csrf_token
+from routes.module.notifications import create_notification, get_notices_sync
+from module.database import collection, next_id_sync, utc_now
 
 
 home_bp = Blueprint("home", __name__)
