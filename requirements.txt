@@ -1,3 +1,7 @@
 Markdown>=3.7,<4
 bleach>=6.2,<7
 PyMongo>=4.10,<5
+quart
+aiohttp
+jwt
+requests
