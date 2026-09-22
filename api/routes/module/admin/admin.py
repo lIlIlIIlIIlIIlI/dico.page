@@ -4,7 +4,7 @@ from functools import wraps
 
 from quart import Blueprint, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 
-from routes.module.auth import (
+from .module.auth import (
     ensure_database,
     get_current_user,
     validate_csrf_token,
