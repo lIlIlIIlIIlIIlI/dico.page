@@ -17,7 +17,7 @@ from typing import Any, Iterable
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
 
 
-MONGODB_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI") or "mongodb+srv://nmseu486_db_user:tXR3ERVVxzCIQMMf@5344tds.le2mmhm.mongodb.net"
+MONGODB_URI = os.getenv("MONGODB_URI")
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE") or os.getenv("MONGO_DATABASE") or "dico_page"
 
 _client: MongoClient | None = None
