@@ -5,3 +5,4 @@ quart
 aiohttp
 jwt
 requests
+uvicorn
