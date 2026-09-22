@@ -15,7 +15,7 @@ import logging
 import asyncio
 import sys
 import os
-from routes import (
+from .routes import (
     all_blueprints
 )
 
