@@ -9,7 +9,7 @@ from pymongo.errors import DuplicateKeyError
 from quart import Blueprint, abort, g, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from module.database import (
+from ..module.database  import (
     collection,
     ensure_database,
     next_id_sync,
