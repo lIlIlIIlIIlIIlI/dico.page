@@ -3,52 +3,55 @@
 {% block title %}알림 설정 | Dico.page{% endblock %}
 
 {% block content %}
-<section class="min-h-[calc(100vh-4rem)] bg-base-200/60" data-async-page>
+<section class="min-h-[calc(100vh-4rem)] bg-base-200/50" data-async-page>
     <style>
-        .mobile-board-no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
-        .mobile-board-no-scrollbar::-webkit-scrollbar { display: none; }
         .mobile-board-drawer {
-            transition: transform 220ms cubic-bezier(.22, .8, .24, 1);
+            visibility: hidden;
+            pointer-events: none;
+            transform: translate3d(105%, 0, 0);
+            transition: transform 220ms cubic-bezier(.22, .8, .24, 1), visibility 0s linear 220ms;
             will-change: transform;
         }
-        .mobile-board-drawer-right { transform: translate3d(105%, 0, 0); }
-        .mobile-board-drawer.is-open { transform: translate3d(0, 0, 0); }
+        .mobile-board-drawer.is-open {
+            visibility: visible;
+            pointer-events: auto;
+            transform: translate3d(0, 0, 0);
+            transition-delay: 0s;
+        }
         .mobile-board-scrim {
             opacity: 0;
+            visibility: hidden;
             pointer-events: none;
-            transition: opacity 180ms ease;
+            transition: opacity 180ms ease, visibility 0s linear 180ms;
         }
-        .mobile-board-scrim.is-open { opacity: 1; pointer-events: auto; }
-        .mobile-board-search {
-            display: grid;
-            grid-template-rows: 0fr;
-            transition: grid-template-rows 180ms ease;
+        .mobile-board-scrim.is-open {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+            transition-delay: 0s;
         }
-        .mobile-board-search > div { min-height: 0; overflow: hidden; }
-        .mobile-board-search.is-open { grid-template-rows: 1fr; }
-
+        .notification-settings-row + .notification-settings-row {
+            border-top: 1px solid #e7e9ef;
+        }
         @media (max-width: 1023px) {
-            /* 공통 header.html은 데스크톱에서만 표시합니다. */
             body > header { display: none !important; }
             [data-mobile-board] { touch-action: pan-y; overscroll-behavior-x: none; }
         }
-
+        @media (min-width: 1024px) {
+            .mobile-settings-topbar,
+            #mobile-board-scrim,
+            #mobile-board-right { display: none !important; }
+        }
         @media (prefers-reduced-motion: reduce) {
             .mobile-board-drawer,
-            .mobile-board-scrim,
-            .mobile-board-search { transition: none; }
+            .mobile-board-scrim { transition: none; }
         }
     </style>
 
-    {% set active_category_name = categories.get(category, '전체') if category else '전체' %}
-
-    <!-- 모바일에서는 공통 header.html을 숨기고 아래 채널 바를 사용합니다. -->
-    <div class="relative lg:hidden" data-mobile-board>
+    <div class="relative min-h-[calc(100vh-4rem)]" data-mobile-board>
         <button id="mobile-board-scrim" type="button" class="mobile-board-scrim fixed inset-0 z-40 bg-black/35 backdrop-blur-[1px]" aria-label="메뉴 닫기" tabindex="-1"></button>
 
-        <!-- 왼쪽으로 밀면 열리는 오른쪽 빠른 메뉴 -->
-                <!-- 왼쪽으로 밀면 열리는 오른쪽 빠른 메뉴 -->
-        <aside id="mobile-board-right" class="mobile-board-drawer mobile-board-drawer-right fixed bottom-0 right-0 top-0 z-50 flex w-[min(82vw,320px)] flex-col border-l border-base-300 bg-base-100 shadow-2xl" aria-hidden="true">
+        <aside id="mobile-board-right" class="mobile-board-drawer fixed bottom-0 right-0 top-0 z-50 flex w-[min(82vw,320px)] flex-col border-l border-base-300 bg-base-100 shadow-2xl lg:hidden" aria-hidden="true">
             <div class="flex items-center justify-between border-b border-base-200 px-5 py-4">
                 <div><p class="text-xs font-semibold uppercase tracking-[.16em] text-primary">Quick menu</p><h2 class="mt-1 text-lg font-bold">빠른 메뉴</h2></div>
                 <button type="button" class="btn btn-circle btn-ghost btn-sm" data-mobile-close aria-label="닫기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
@@ -62,199 +65,97 @@
                 {% endif %}
                 <ul class="menu mt-3 w-full gap-1 p-0">
                     <li><a href="/notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>알림{% if unread_count | default(0) %}<span class="badge badge-error badge-sm ml-auto text-white">{{ unread_count }}</span>{% endif %}</a></li>
-                    <li><a href="/settings/notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9 7 7M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>알림 설정</a></li>
-                    {% if current_user | default(none) and current_user.role == 'admin' %}<li><a href="{{ url_for('admin.dashboard') }}" class="font-semibold text-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="M12 3 4 7v5c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V7l-8-4Z"/><path d="m9 12 2 2 4-4"/></svg>관리자 페이지</a></li>{% endif %}
+                    <li><a href="/settings/notifications" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9 7 7M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>알림 설정</a></li>
+                    {% if current_user | default(none) and current_user.role == 'admin' %}
+                    <li><a href="{{ url_for('admin.dashboard') }}" class="font-semibold text-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="M12 3 4 7v5c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V7l-8-4Z"/><path d="m9 12 2 2 4-4"/></svg>관리자 페이지</a></li>
+                    {% endif %}
                 </ul>
             </div>
-
-            <!-- 계정 메뉴: 로그인 상태에 따라 필요한 항목만 세로로 표시 -->
             <div class="shrink-0 border-t border-base-200 p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
                 {% if current_user | default(none) %}
                 <form method="post" action="{{ url_for('auth.logout') }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="btn btn-ghost w-full justify-start gap-3 text-error">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg>
-                        로그아웃
-                    </button>
+                    <button type="submit" class="btn btn-ghost w-full justify-start gap-3 text-error"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg>로그아웃</button>
                 </form>
                 {% else %}
                 <div class="flex flex-col gap-1">
-                    <a href="{{ url_for('auth.login', next=request.path) }}" class="btn btn-ghost w-full justify-start gap-3">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5" aria-hidden="true"><path d="m14 8 4 4-4 4"/><path d="M18 12H6"/><path d="M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5"/></svg>
-                        로그인
-                    </a>
-                    <a href="{{ url_for('auth.register') }}" class="btn btn-primary w-full justify-start gap-3">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
-                        회원가입
-                    </a>
+                    <a href="{{ url_for('auth.login', next=request.path) }}" class="btn btn-ghost w-full justify-start gap-3">로그인</a>
+                    <a href="{{ url_for('auth.register') }}" class="btn btn-primary w-full justify-start gap-3">회원가입</a>
                 </div>
                 {% endif %}
             </div>
         </aside>
 
-        <main class="min-w-0">
-            <div class="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                    <h1 class="text-2xl font-bold">알림 설정</h1>
-                    <p class="mt-1 text-sm leading-6 text-base-content/60">받고 싶은 알림 종류를 선택할 수 있습니다.</p>
-                </div>
+        <div class="mobile-settings-topbar sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-base-300 bg-base-100/95 px-4 backdrop-blur lg:hidden">
+            <a href="{{ url_for('home.index') }}" class="btn btn-circle btn-ghost btn-sm" aria-label="게시판으로 이동"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="size-5"><path d="m15 18-6-6 6-6"/></svg></a>
+            <span class="min-w-0 flex-1 truncate text-sm font-semibold text-base-content/60">Dico.page</span>
+            <button type="button" class="btn btn-circle btn-ghost btn-sm" data-mobile-open="right" aria-label="빠른 메뉴 열기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+        </div>
 
-                <div id="notification-save-status" class="badge badge-ghost min-h-7 gap-2 self-start sm:self-auto" role="status" aria-live="polite" data-state="saved">
-                    <span data-save-status-dot class="size-2 rounded-full bg-success" aria-hidden="true"></span>
-                    <span data-save-status-text>저장됨</span>
-                </div>
-            </div>
+        <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-5 sm:px-6 sm:py-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:px-4 lg:py-8">
+            <aside class="hidden lg:block">
+                {% include "settings/sidebar.html" %}
+            </aside>
 
-            <div class="space-y-4 sm:space-y-5">
-                <section class="rounded-2xl border border-base-300 bg-base-100 shadow-sm">
-                    <label for="notification-all-enabled" class="flex cursor-pointer items-center justify-between gap-4 p-4 sm:p-6">
-                        <span class="min-w-0">
-                            <span class="block font-semibold">전체 알림</span>
-                            <span class="mt-1 block text-sm leading-5 text-base-content/60">모든 사이트 알림을 한 번에 켜거나 끕니다.</span>
-                        </span>
-                        <input
-                            id="notification-all-enabled"
-                            type="checkbox"
-                            class="toggle toggle-primary shrink-0"
-                            aria-controls="notification-category-card"
-                            {% if notification_settings.all_enabled %}checked{% endif %}
-                        >
-                    </label>
-                </section>
-
-                <section id="notification-category-card" class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm transition-opacity" aria-labelledby="notification-category-title">
-                    <div class="border-b border-base-300 px-4 py-4 sm:px-6">
-                        <h2 id="notification-category-title" class="font-semibold">알림 종류</h2>
-                        <p class="mt-1 text-sm leading-5 text-base-content/50">항목별로 알림 수신 여부를 설정합니다.</p>
+            <main class="min-w-0">
+                <div class="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold">알림 설정</h2>
+                        <p class="mt-1 text-sm leading-6 text-base-content/60">받고 싶은 알림 종류를 선택할 수 있습니다.</p>
                     </div>
 
-                    <div class="divide-y divide-base-300">
-                        <label class="flex cursor-pointer items-center justify-between gap-4 p-4 sm:px-6 sm:py-5">
-                            <span class="min-w-0">
-                                <span class="block font-medium">소식 알림</span>
-                                <span class="mt-1 block text-sm leading-5 text-base-content/50">운영 공지와 중요한 안내를 받습니다.</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                data-notification-setting="notice_enabled"
-                                class="toggle toggle-primary shrink-0"
-                                {% if notification_settings.notice_enabled %}checked{% endif %}
-                            >
-                        </label>
-
-                        <label class="flex cursor-pointer items-center justify-between gap-4 p-4 sm:px-6 sm:py-5">
-                            <span class="min-w-0">
-                                <span class="block font-medium">활동 알림</span>
-                                <span class="mt-1 block text-sm leading-5 text-base-content/50">댓글, 답글 등 내 활동과 관련된 알림을 받습니다.</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                data-notification-setting="activity_enabled"
-                                class="toggle toggle-primary shrink-0"
-                                {% if notification_settings.activity_enabled %}checked{% endif %}
-                            >
-                        </label>
-
-                        <label class="flex cursor-pointer items-center justify-between gap-4 p-4 sm:px-6 sm:py-5">
-                            <span class="min-w-0">
-                                <span class="block font-medium">혜택 알림</span>
-                                <span class="mt-1 block text-sm leading-5 text-base-content/50">이벤트와 새로운 혜택 소식을 받습니다.</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                data-notification-setting="benefit_enabled"
-                                class="toggle toggle-primary shrink-0"
-                                {% if notification_settings.benefit_enabled %}checked{% endif %}
-                            >
-                        </label>
+                    <div id="notification-save-status" class="inline-flex min-h-8 items-center gap-2 self-start rounded-full border border-base-300 bg-base-100 px-3 text-sm shadow-sm sm:self-auto" role="status" aria-live="polite" data-state="saved">
+                        <span data-save-status-dot class="size-2 rounded-full bg-success" aria-hidden="true"></span>
+                        <span data-save-status-text>저장됨</span>
                     </div>
-                </section>
-            </div>
-    </div>
-
-    <!-- 기존 데스크톱 레이아웃 -->
-    <div class="mx-auto hidden w-full max-w-7xl items-start gap-6 px-4 py-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)] lg:py-8">
-        {% include "settings/sidebar.html" %}
-
-        <main class="min-w-0">
-            <div class="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                    <h1 class="text-2xl font-bold">알림 설정</h1>
-                    <p class="mt-1 text-sm leading-6 text-base-content/60">받고 싶은 알림 종류를 선택할 수 있습니다.</p>
                 </div>
 
-                <div id="notification-save-status" class="badge badge-ghost min-h-7 gap-2 self-start sm:self-auto" role="status" aria-live="polite" data-state="saved">
-                    <span data-save-status-dot class="size-2 rounded-full bg-success" aria-hidden="true"></span>
-                    <span data-save-status-text>저장됨</span>
+                <div class="space-y-4 sm:space-y-5">
+                    <section class="rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+                        <label for="notification-all-enabled" class="flex cursor-pointer items-center justify-between gap-4 p-4 sm:p-6">
+                            <span class="min-w-0">
+                                <span class="block font-semibold">전체 알림</span>
+                                <span class="mt-1 block text-sm leading-5 text-base-content/60">모든 사이트 알림을 한 번에 켜거나 끕니다.</span>
+                            </span>
+                            <input id="notification-all-enabled" type="checkbox" class="toggle toggle-primary shrink-0" aria-controls="notification-category-card" {% if notification_settings.all_enabled %}checked{% endif %}>
+                        </label>
+                    </section>
+
+                    <section id="notification-category-card" class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm transition-opacity" aria-labelledby="notification-category-title">
+                        <div class="border-b border-base-300 px-4 py-4 sm:px-6">
+                            <h3 id="notification-category-title" class="font-semibold">알림 종류</h3>
+                            <p class="mt-1 text-sm leading-5 text-base-content/50">항목별로 알림 수신 여부를 설정합니다.</p>
+                        </div>
+
+                        <div class="notification-settings-list">
+                            <label class="notification-settings-row flex cursor-pointer items-center justify-between gap-4 p-4 sm:px-6 sm:py-5">
+                                <span class="min-w-0">
+                                    <span class="block font-medium">소식 알림</span>
+                                    <span class="mt-1 block text-sm leading-5 text-base-content/50">운영 공지와 중요한 안내를 받습니다.</span>
+                                </span>
+                                <input type="checkbox" data-notification-setting="notice_enabled" class="toggle toggle-primary shrink-0" {% if notification_settings.notice_enabled %}checked{% endif %}>
+                            </label>
+
+                            <label class="notification-settings-row flex cursor-pointer items-center justify-between gap-4 p-4 sm:px-6 sm:py-5">
+                                <span class="min-w-0">
+                                    <span class="block font-medium">활동 알림</span>
+                                    <span class="mt-1 block text-sm leading-5 text-base-content/50">댓글, 답글 등 내 활동과 관련된 알림을 받습니다.</span>
+                                </span>
+                                <input type="checkbox" data-notification-setting="activity_enabled" class="toggle toggle-primary shrink-0" {% if notification_settings.activity_enabled %}checked{% endif %}>
+                            </label>
+
+                            <label class="notification-settings-row flex cursor-pointer items-center justify-between gap-4 p-4 sm:px-6 sm:py-5">
+                                <span class="min-w-0">
+                                    <span class="block font-medium">혜택 알림</span>
+                                    <span class="mt-1 block text-sm leading-5 text-base-content/50">이벤트와 새로운 혜택 소식을 받습니다.</span>
+                                </span>
+                                <input type="checkbox" data-notification-setting="benefit_enabled" class="toggle toggle-primary shrink-0" {% if notification_settings.benefit_enabled %}checked{% endif %}>
+                            </label>
+                        </div>
+                    </section>
                 </div>
-            </div>
-
-            <div class="space-y-4 sm:space-y-5">
-                <section class="rounded-2xl border border-base-300 bg-base-100 shadow-sm">
-                    <label for="notification-all-enabled" class="flex cursor-pointer items-center justify-between gap-4 p-4 sm:p-6">
-                        <span class="min-w-0">
-                            <span class="block font-semibold">전체 알림</span>
-                            <span class="mt-1 block text-sm leading-5 text-base-content/60">모든 사이트 알림을 한 번에 켜거나 끕니다.</span>
-                        </span>
-                        <input
-                            id="notification-all-enabled"
-                            type="checkbox"
-                            class="toggle toggle-primary shrink-0"
-                            aria-controls="notification-category-card"
-                            {% if notification_settings.all_enabled %}checked{% endif %}
-                        >
-                    </label>
-                </section>
-
-                <section id="notification-category-card" class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm transition-opacity" aria-labelledby="notification-category-title">
-                    <div class="border-b border-base-300 px-4 py-4 sm:px-6">
-                        <h2 id="notification-category-title" class="font-semibold">알림 종류</h2>
-                        <p class="mt-1 text-sm leading-5 text-base-content/50">항목별로 알림 수신 여부를 설정합니다.</p>
-                    </div>
-
-                    <div class="divide-y divide-base-300">
-                        <label class="flex cursor-pointer items-center justify-between gap-4 p-4 sm:px-6 sm:py-5">
-                            <span class="min-w-0">
-                                <span class="block font-medium">소식 알림</span>
-                                <span class="mt-1 block text-sm leading-5 text-base-content/50">운영 공지와 중요한 안내를 받습니다.</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                data-notification-setting="notice_enabled"
-                                class="toggle toggle-primary shrink-0"
-                                {% if notification_settings.notice_enabled %}checked{% endif %}
-                            >
-                        </label>
-
-                        <label class="flex cursor-pointer items-center justify-between gap-4 p-4 sm:px-6 sm:py-5">
-                            <span class="min-w-0">
-                                <span class="block font-medium">활동 알림</span>
-                                <span class="mt-1 block text-sm leading-5 text-base-content/50">댓글, 답글 등 내 활동과 관련된 알림을 받습니다.</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                data-notification-setting="activity_enabled"
-                                class="toggle toggle-primary shrink-0"
-                                {% if notification_settings.activity_enabled %}checked{% endif %}
-                            >
-                        </label>
-
-                        <label class="flex cursor-pointer items-center justify-between gap-4 p-4 sm:px-6 sm:py-5">
-                            <span class="min-w-0">
-                                <span class="block font-medium">혜택 알림</span>
-                                <span class="mt-1 block text-sm leading-5 text-base-content/50">이벤트와 새로운 혜택 소식을 받습니다.</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                data-notification-setting="benefit_enabled"
-                                class="toggle toggle-primary shrink-0"
-                                {% if notification_settings.benefit_enabled %}checked{% endif %}
-                            >
-                        </label>
-                    </div>
-                </section>
-            </div>
-        </main>
+            </main>
+        </div>
     </div>
 </section>
 {% endblock %}
@@ -272,8 +173,6 @@
 
     const rightDrawer = document.getElementById('mobile-board-right');
     const scrim = document.getElementById('mobile-board-scrim');
-    const searchPanel = document.getElementById('mobile-board-search');
-    const searchInput = document.getElementById('mobile-board-search-input');
     if (!rightDrawer || !scrim) return;
 
     let drawerOpen = false;
@@ -291,23 +190,14 @@
     root.querySelectorAll('[data-mobile-open="right"]').forEach((button) => {
         button.addEventListener('click', () => setDrawer(true), { signal });
     });
-
     root.querySelectorAll('[data-mobile-close]').forEach((button) => {
         button.addEventListener('click', () => setDrawer(false), { signal });
     });
-
     scrim.addEventListener('click', () => setDrawer(false), { signal });
-
-    root.querySelector('[data-mobile-search-toggle]')?.addEventListener('click', () => {
-        const willOpen = !searchPanel.classList.contains('is-open');
-        searchPanel.classList.toggle('is-open', willOpen);
-        if (willOpen) window.setTimeout(() => searchInput?.focus(), 190);
-    }, { signal });
 
     root.addEventListener('touchstart', (event) => {
         if (event.touches.length !== 1) return;
-        if (event.target.closest('[data-horizontal-scroll], input, textarea, select')) return;
-
+        if (event.target.closest('input, textarea, select, button, a, [data-horizontal-scroll]')) return;
         const touch = event.touches[0];
         touchStart = { x: touch.clientX, y: touch.clientY };
     }, { passive: true, signal });
@@ -317,25 +207,16 @@
             touchStart = null;
             return;
         }
-
         const touch = event.changedTouches[0];
         const deltaX = touch.clientX - touchStart.x;
         const deltaY = touch.clientY - touchStart.y;
         touchStart = null;
-
         if (Math.abs(deltaX) < 56 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
 
-        /* 열린 오른쪽 퀵 메뉴는 오른쪽으로 밀어서 닫습니다. */
-        if (drawerOpen) {
-            if (deltaX > 0) {
-                blockClickUntil = Date.now() + 350;
-                setDrawer(false);
-            }
-            return;
-        }
-
-        /* 닫힌 상태에서는 왼쪽 스와이프만 퀵 메뉴를 엽니다. */
-        if (deltaX < 0) {
+        if (drawerOpen && deltaX > 0) {
+            blockClickUntil = Date.now() + 350;
+            setDrawer(false);
+        } else if (!drawerOpen && deltaX < 0) {
             blockClickUntil = Date.now() + 350;
             setDrawer(true);
         }
@@ -350,7 +231,6 @@
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') setDrawer(false);
     }, { signal });
-
     window.addEventListener('app:navigation-start', () => {
         setDrawer(false);
         controller.abort();
@@ -381,7 +261,6 @@
             activity_enabled: false,
             benefit_enabled: false
         };
-
         categoryToggles.forEach((toggle) => {
             settings[toggle.dataset.notificationSetting] = toggle.checked;
         });
@@ -400,16 +279,14 @@
         const disabled = !allToggle.checked;
         categoryCard.classList.toggle('opacity-50', disabled);
         categoryCard.setAttribute('aria-disabled', String(disabled));
-        categoryToggles.forEach((toggle) => {
-            toggle.disabled = disabled;
-        });
+        categoryToggles.forEach((toggle) => { toggle.disabled = disabled; });
     }
 
     function setStatus(type, message) {
         status.dataset.state = type;
-        status.classList.toggle('badge-error', type === 'error');
-        status.classList.toggle('badge-ghost', type !== 'error');
-        statusDot.className = `size-2 rounded-full ${type === 'saving' ? 'animate-pulse bg-warning' : type === 'error' ? 'bg-error-content' : 'bg-success'}`;
+        status.classList.toggle('border-error/30', type === 'error');
+        status.classList.toggle('text-error', type === 'error');
+        statusDot.className = `size-2 rounded-full ${type === 'saving' ? 'animate-pulse bg-warning' : type === 'error' ? 'bg-error' : 'bg-success'}`;
         statusText.textContent = message;
     }
 
@@ -419,7 +296,6 @@
         saveController = controller;
         const settings = readSettings();
         setStatus('saving', '저장 중');
-
         try {
             const response = await fetch(saveUrl, {
                 method: 'POST',
@@ -432,11 +308,9 @@
                 signal: controller.signal
             });
             const data = await response.json();
-
             if (!response.ok || !data.success) {
                 throw new Error(data.message || '알림 설정을 저장하지 못했습니다.');
             }
-
             savedSettings = data.settings || settings;
             setStatus('saved', '저장됨');
         } catch (error) {
@@ -450,15 +324,8 @@
         updateCategoryState();
         saveSettings();
     });
-
-    categoryToggles.forEach((toggle) => {
-        toggle.addEventListener('change', saveSettings);
-    });
-
-    window.addEventListener('pagehide', () => {
-        saveController?.abort();
-    }, { once: true });
-
+    categoryToggles.forEach((toggle) => toggle.addEventListener('change', saveSettings));
+    window.addEventListener('pagehide', () => saveController?.abort(), { once: true });
     updateCategoryState();
 })();
 </script>
