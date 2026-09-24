@@ -74,7 +74,7 @@
             </div> -->
 
 
-            <nav class="sticky top-14 z-20 mt-3 border-y border-base-200 bg-base-100/95 backdrop-blur" aria-label="게시글 분류">
+            <nav class="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-base-300 bg-base-100/95 px-3 backdrop-blur" aria-label="게시글 분류">
                 <div class="mobile-board-no-scrollbar flex snap-x snap-mandatory gap-2 overflow-x-auto px-3 py-3" data-horizontal-scroll>
                     <a href="{{ url_for('home.index') }}" class="btn btn-sm shrink-0 snap-start rounded-full {% if not category %}btn-primary{% else %}btn-outline{% endif %}">전체</a>
                     <a href="{{ url_for('home.index', category='general') }}" class="btn btn-sm shrink-0 snap-start rounded-full {% if category == 'general' %}btn-primary{% else %}btn-outline{% endif %}">자유</a>
