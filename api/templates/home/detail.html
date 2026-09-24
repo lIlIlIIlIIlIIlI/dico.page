@@ -28,6 +28,36 @@
         .mobile-board-search > div { min-height: 0; overflow: hidden; }
         .mobile-board-search.is-open { grid-template-rows: 1fr; }
 
+        /* 코드 블록은 본문 너비 안에 고정하고, 긴 코드는 블록 안에서만 가로 스크롤합니다. */
+        .dico-markdown { min-width: 0; max-width: 100%; }
+        .dico-markdown pre {
+            box-sizing: border-box;
+            width: 100%;
+            max-width: 100%;
+            overflow-x: auto;
+            overflow-y: hidden;
+            overscroll-behavior-x: contain;
+            -webkit-overflow-scrolling: touch;
+            white-space: pre;
+        }
+        .dico-markdown pre code {
+            display: block;
+            min-width: max-content;
+            max-width: none;
+            overflow-wrap: normal;
+            word-break: normal;
+            white-space: inherit;
+        }
+
+        @media (max-width: 767px) {
+            .dico-markdown pre {
+                padding: .75rem;
+                border-radius: .75rem;
+                font-size: .78rem;
+                line-height: 1.55;
+            }
+        }
+
         @media (max-width: 1023px) {
             body > header { display: none !important; }
             [data-mobile-board] { touch-action: pan-y; overscroll-behavior-x: none; }
@@ -325,6 +355,20 @@
 </script>
 <script>
 (() => {
+    // 본문 전체의 이중 인코딩된 HTML 특수문자를 텍스트에서만 복원해 태그로 실행되지 않게 합니다.
+    // 브라우저의 HTML 파서를 사용해 &lt; 같은 기본 문자와 &copy; 같은 이름형 엔티티도 처리합니다.
+    const entityDecoder = document.createElement('textarea');
+    const decodeHtmlEntities = (value) => value.replace(/&(?:[a-z][a-z\d]*|#(?:x[\da-f]+|\d+));/gi, (entity) => {
+        entityDecoder.innerHTML = entity;
+        const decoded = entityDecoder.value;
+        return decoded === entity ? entity : decoded;
+    });
+    document.querySelectorAll('.dico-markdown').forEach((content) => {
+        const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+        let textNode;
+        while ((textNode = walker.nextNode())) textNode.nodeValue = decodeHtmlEntities(textNode.nodeValue);
+    });
+
     const shareButtons = [...document.querySelectorAll('[data-share-button]')];
     const likeButtons = [...document.querySelectorAll('[data-like-button]')];
     const likeCounts = [...document.querySelectorAll('[data-like-count]')];
