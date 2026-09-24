@@ -4,7 +4,157 @@
 
 {% block content %}
 <section class="min-h-[calc(100vh-4rem)] bg-base-200/60" data-async-page>
-    <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:py-8">
+    <style>
+        .mobile-board-no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+        .mobile-board-no-scrollbar::-webkit-scrollbar { display: none; }
+        .mobile-board-drawer {
+            transition: transform 220ms cubic-bezier(.22, .8, .24, 1);
+            will-change: transform;
+        }
+        .mobile-board-drawer-left { transform: translate3d(-105%, 0, 0); }
+        .mobile-board-drawer-right { transform: translate3d(105%, 0, 0); }
+        .mobile-board-drawer.is-open { transform: translate3d(0, 0, 0); }
+        .mobile-board-scrim {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 180ms ease;
+        }
+        .mobile-board-scrim.is-open { opacity: 1; pointer-events: auto; }
+        .mobile-board-search {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 180ms ease;
+        }
+        .mobile-board-search > div { min-height: 0; overflow: hidden; }
+        .mobile-board-search.is-open { grid-template-rows: 1fr; }
+
+        @media (max-width: 1023px) {
+            body > header { position: sticky; top: 0; z-index: 70; }
+            [data-mobile-board] { touch-action: pan-y; overscroll-behavior-x: none; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .mobile-board-drawer,
+            .mobile-board-scrim,
+            .mobile-board-search { transition: none; }
+        }
+    </style>
+
+    {% set active_category_name = categories.get(category, '전체') if category else '전체' %}
+
+    <!-- 모바일: base.html에서 layout/header.html을 include한 상태로 표시됩니다. -->
+    <div class="relative lg:hidden" data-mobile-board>
+        <button id="mobile-board-scrim" type="button" class="mobile-board-scrim fixed inset-x-0 bottom-0 top-16 z-40 bg-black/35 backdrop-blur-[1px]" aria-label="메뉴 닫기" tabindex="-1"></button>
+
+        <!-- 오른쪽으로 밀면 열리는 게시판 메뉴 -->
+        <aside id="mobile-board-left" class="mobile-board-drawer mobile-board-drawer-left fixed bottom-0 left-0 top-16 z-50 flex w-[min(84vw,330px)] flex-col border-r border-base-300 bg-base-100 shadow-2xl" aria-hidden="true">
+            <div class="flex items-center justify-between border-b border-base-200 px-5 py-4">
+                <div><p class="text-xs font-semibold uppercase tracking-[.16em] text-primary">Dico.page</p><h2 class="mt-1 text-lg font-bold">게시판 둘러보기</h2></div>
+                <button type="button" class="btn btn-circle btn-ghost btn-sm" data-mobile-close aria-label="닫기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+            </div>
+            <nav class="min-h-0 flex-1 overflow-y-auto p-3" aria-label="모바일 게시판 메뉴">
+                <ul class="menu w-full gap-1 p-0">
+                    <li><a href="{{ url_for('home.index') }}" class="{% if not category %}active{% endif %}"><span class="flex size-8 items-center justify-center rounded-xl bg-primary/10 text-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span>전체 게시글</a></li>
+                    <li><a href="{{ url_for('home.index', category='general') }}" class="{% if category == 'general' %}active{% endif %}"><span class="size-2 rounded-full bg-base-content/30"></span>자유 게시판</a></li>
+                    <li><a href="{{ url_for('home.index', category='question') }}" class="{% if category == 'question' %}active{% endif %}"><span class="size-2 rounded-full bg-warning"></span>질문 게시판</a></li>
+                    <li><a href="{{ url_for('home.index', category='info') }}" class="{% if category == 'info' %}active{% endif %}"><span class="size-2 rounded-full bg-info"></span>정보 게시판</a></li>
+                    <li class="my-2 border-t border-base-200"></li>
+                    <li><a href="{{ url_for('notifications.notice_list') }}"><span class="size-2 rounded-full bg-primary"></span>공지사항</a></li>
+                </ul>
+                <div class="mt-5 rounded-2xl bg-base-200/70 p-4 text-sm leading-6 text-base-content/65">
+                    오른쪽으로 밀면 게시판 메뉴, 왼쪽으로 밀면 빠른 메뉴가 열립니다.
+                </div>
+            </nav>
+            <div class="border-t border-base-200 p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
+                {% if current_user | default(none) %}<a href="{{ url_for('home.write') }}" class="btn btn-primary w-full">새 글 작성</a>{% else %}<a href="{{ url_for('auth.login', next=url_for('home.write')) }}" class="btn btn-primary w-full">로그인 후 글쓰기</a>{% endif %}
+            </div>
+        </aside>
+
+        <!-- 왼쪽으로 밀면 열리는 빠른 메뉴 -->
+        <aside id="mobile-board-right" class="mobile-board-drawer mobile-board-drawer-right fixed bottom-0 right-0 top-16 z-50 flex w-[min(82vw,320px)] flex-col border-l border-base-300 bg-base-100 shadow-2xl" aria-hidden="true">
+            <div class="flex items-center justify-between border-b border-base-200 px-5 py-4">
+                <div><p class="text-xs font-semibold uppercase tracking-[.16em] text-primary">Quick menu</p><h2 class="mt-1 text-lg font-bold">빠른 메뉴</h2></div>
+                <button type="button" class="btn btn-circle btn-ghost btn-sm" data-mobile-close aria-label="닫기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+            </div>
+            <div class="min-h-0 flex-1 overflow-y-auto p-4">
+                {% if current_user | default(none) %}
+                <a href="/users/{{ current_user.user_uid }}" class="flex items-center gap-3 rounded-2xl bg-primary/5 p-4">
+                    <div class="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary font-bold text-primary-content">{{ current_user.nickname | first }}</div>
+                    <div class="min-w-0"><p class="truncate font-bold">{{ current_user.nickname }}</p><p class="mt-0.5 text-xs text-base-content/45">내 프로필 보기</p></div>
+                </a>
+                {% endif %}
+                <ul class="menu mt-3 w-full gap-1 p-0">
+                    <li><a href="/notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>알림{% if unread_count | default(0) %}<span class="badge badge-error badge-sm ml-auto text-white">{{ unread_count }}</span>{% endif %}</a></li>
+                    <li><a href="/settings/notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9 7 7M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>알림 설정</a></li>
+                    {% if current_user | default(none) and current_user.role == 'admin' %}<li><a href="{{ url_for('admin.dashboard') }}" class="font-semibold text-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="M12 3 4 7v5c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V7l-8-4Z"/><path d="m9 12 2 2 4-4"/></svg>관리자 페이지</a></li>{% endif %}
+                </ul>
+            </div>
+        </aside>
+
+        <div class="min-h-[calc(100vh-4rem)] pb-[calc(5.25rem+env(safe-area-inset-bottom))]">
+            <div class="sticky top-16 z-30 flex h-14 items-center gap-2 border-b border-base-300 bg-base-100/95 px-3 backdrop-blur">
+                <button type="button" class="btn btn-circle btn-ghost btn-sm" data-mobile-open="left" aria-label="게시판 메뉴 열기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="size-6"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+                <div class="min-w-0 flex-1"><p class="truncate font-bold">{{ active_category_name }} 게시판</p><p class="truncate text-[11px] text-base-content/40">좌우로 밀어 메뉴 열기</p></div>
+                <button type="button" class="btn btn-circle btn-ghost btn-sm" data-mobile-open="right" aria-label="빠른 메뉴 열기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+            </div>
+
+            <div class="mx-3 mt-3 overflow-hidden rounded-3xl bg-gradient-to-br from-primary via-violet-500 to-indigo-600 p-5 text-primary-content shadow-sm">
+                <div class="flex min-h-28 items-center justify-between gap-4">
+                    <div class="min-w-0"><span class="rounded-full bg-white/15 px-3 py-1 text-[11px] font-semibold">Dico.page Community</span><h1 class="mt-3 text-2xl font-black tracking-tight">함께 나누는 이야기</h1><p class="mt-1 text-sm text-white/75">질문하고, 기록하고, 자유롭게 이야기해 보세요.</p></div>
+                    <div class="flex size-20 shrink-0 rotate-3 items-center justify-center rounded-[1.75rem] bg-white/15 text-4xl font-black shadow-inner">D</div>
+                </div>
+            </div>
+
+            <nav class="sticky top-[7.5rem] z-20 mt-3 border-y border-base-200 bg-base-100/95 backdrop-blur" aria-label="게시글 분류">
+                <div class="mobile-board-no-scrollbar flex snap-x snap-mandatory gap-2 overflow-x-auto px-3 py-3" data-horizontal-scroll>
+                    <a href="{{ url_for('home.index') }}" class="btn btn-sm shrink-0 snap-start rounded-full {% if not category %}btn-primary{% else %}btn-outline{% endif %}">전체</a>
+                    <a href="{{ url_for('home.index', category='general') }}" class="btn btn-sm shrink-0 snap-start rounded-full {% if category == 'general' %}btn-primary{% else %}btn-outline{% endif %}">자유</a>
+                    <a href="{{ url_for('home.index', category='question') }}" class="btn btn-sm shrink-0 snap-start rounded-full {% if category == 'question' %}btn-primary{% else %}btn-outline{% endif %}">질문</a>
+                    <a href="{{ url_for('home.index', category='info') }}" class="btn btn-sm shrink-0 snap-start rounded-full {% if category == 'info' %}btn-primary{% else %}btn-outline{% endif %}">정보/자료</a>
+                    <a href="{{ url_for('notifications.notice_list') }}" class="btn btn-outline btn-sm shrink-0 snap-start rounded-full">공지사항</a>
+                </div>
+            </nav>
+
+            <div id="mobile-board-search" class="mobile-board-search border-b border-base-200 bg-base-100"><div><form method="get" action="{{ url_for('home.index') }}" class="flex gap-2 p-3">{% if category %}<input type="hidden" name="category" value="{{ category }}">{% endif %}<label class="input input-bordered input-sm flex min-w-0 flex-1 items-center gap-2 rounded-full"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4 text-base-content/40"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="mobile-board-search-input" name="q" value="{{ search }}" class="min-w-0 grow" placeholder="제목, 내용, 작성자 검색"></label><button class="btn btn-primary btn-sm rounded-full" type="submit">검색</button></form></div></div>
+
+            <div class="flex items-center justify-between px-4 pb-2 pt-4"><div><h2 class="font-bold">{{ active_category_name }} 게시글</h2><p class="mt-0.5 text-xs text-base-content/45">총 {{ total }}개의 이야기</p></div>{% if search %}<a href="{{ url_for('home.index', category=category) }}" class="btn btn-ghost btn-xs text-primary">검색 초기화</a>{% endif %}</div>
+
+            <div class="border-y border-base-300 bg-base-100">
+                {% for notice in notices %}
+                <a href="{{ url_for('notifications.notice_detail', notice_id=notice.id) }}" class="flex min-w-0 gap-3 border-b border-base-200 bg-primary/5 px-4 py-3 active:bg-primary/10">
+                    <div class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="m3 11 18-5v12L3 14v-3Z"/><path d="M11.6 16.2 13 21H8l-1.4-6"/></svg></div>
+                    <div class="min-w-0 flex-1"><div class="flex items-center gap-2"><span class="badge badge-primary badge-xs shrink-0">공지</span><p class="truncate font-semibold">{% if notice.is_pinned %}📌 {% endif %}{{ notice.title }}</p></div><div class="mt-1.5 flex items-center gap-2 text-xs text-base-content/45"><span class="truncate">{{ notice.author_nickname }}</span><span>·</span><time>{{ notice.created_at[:10] }}</time></div></div>
+                </a>
+                {% endfor %}
+
+                {% for post in posts %}
+                {% set mobile_post_url = url_for('home.post_detail', post_id=post.id) %}
+                <a href="{{ mobile_post_url }}" class="group block border-b border-base-200 px-4 py-3.5 last:border-b-0 active:bg-base-200/70">
+                    <div class="flex min-w-0 items-start gap-3">
+                        <div class="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-base-200 text-base-content/45"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="M4 5h16v12H8l-4 4V5Z"/></svg></div>
+                        <div class="min-w-0 flex-1">
+                            <div class="flex min-w-0 items-center gap-1.5">{% if post.category == 'question' %}<span class="badge badge-warning badge-xs shrink-0">질문</span>{% elif post.category == 'info' %}<span class="badge badge-info badge-xs shrink-0">정보</span>{% else %}<span class="text-[11px] font-semibold text-primary">자유</span>{% endif %}<h3 class="truncate text-[15px] font-semibold leading-6">{{ post.title }}</h3>{% if post.comment_count %}<span class="shrink-0 text-xs font-bold text-primary">[{{ post.comment_count }}]</span>{% endif %}</div>
+                            <div class="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-base-content/45"><span class="max-w-28 truncate text-base-content/65">{{ post.author_nickname }}</span><time>{{ post.created_at[5:10] }}</time><span class="inline-flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-3.5"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></svg>{{ post.views }}</span>{% if post.like_count %}<span>♥ {{ post.like_count }}</span>{% endif %}</div>
+                        </div>
+                    </div>
+                </a>
+                {% else %}{% if not notices %}<div class="flex min-h-56 flex-col items-center justify-center px-6 text-center"><div class="flex size-14 items-center justify-center rounded-2xl bg-base-200 text-base-content/30"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="size-7"><path d="M4 5h16v12H8l-4 4V5Z"/></svg></div><p class="mt-4 font-semibold">등록된 게시글이 없습니다.</p><p class="mt-1 text-sm text-base-content/45">첫 번째 이야기를 남겨보세요.</p></div>{% endif %}{% endfor %}
+            </div>
+
+            <div class="flex items-center justify-center gap-2 px-4 py-5"><a href="{{ url_for('home.index', page=page-1, q=search, category=category) }}" class="btn btn-sm rounded-full {% if page <= 1 %}btn-disabled{% endif %}">이전</a><span class="rounded-full bg-base-100 px-4 py-2 text-xs font-semibold shadow-sm">{{ page }} / {{ total_pages }}</span><a href="{{ url_for('home.index', page=page+1, q=search, category=category) }}" class="btn btn-sm rounded-full {% if page >= total_pages %}btn-disabled{% endif %}">다음</a></div>
+        </div>
+
+        <nav class="fixed inset-x-0 bottom-0 z-30 grid h-[calc(4.75rem+env(safe-area-inset-bottom))] grid-cols-5 border-t border-base-300 bg-base-100/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_24px_rgba(0,0,0,.06)] backdrop-blur" aria-label="모바일 하단 메뉴">
+            <a href="{{ url_for('notifications.notice_list') }}" class="flex flex-col items-center justify-center gap-1 text-[11px] text-base-content/50"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="m3 11 18-5v12L3 14v-3Z"/></svg>공지</a>
+            <a href="{{ url_for('home.index') }}" class="flex flex-col items-center justify-center gap-1 text-[11px] {% if not category %}font-bold text-primary{% else %}text-base-content/50{% endif %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="M4 6h16M4 12h16M4 18h16"/></svg>전체</a>
+            <a href="{{ url_for('home.index', category='question') }}" class="flex flex-col items-center justify-center gap-1 text-[11px] {% if category == 'question' %}font-bold text-primary{% else %}text-base-content/50{% endif %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.3 2.3 0 1 1 3.7 1.8c-.9.6-1.5 1-1.5 2.2M12 17h.01"/></svg>질문</a>
+            <button type="button" class="flex flex-col items-center justify-center gap-1 text-[11px] text-base-content/50" data-mobile-search-toggle><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" class="size-5"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>검색</button>
+            {% if current_user | default(none) %}<a href="{{ url_for('home.write') }}" class="flex flex-col items-center justify-center gap-1 text-[11px] font-bold text-primary">{% else %}<a href="{{ url_for('auth.login', next=url_for('home.write')) }}" class="flex flex-col items-center justify-center gap-1 text-[11px] font-bold text-primary">{% endif %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4L16.5 3.5Z"/></svg>글쓰기</a>
+        </nav>
+    </div>
+
+    <!-- 기존 데스크톱 레이아웃 -->
+    <div class="mx-auto hidden w-full max-w-7xl items-start gap-6 px-4 py-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)] lg:py-8">
         {% include "layout/sidebar.html" %}
 
         <div class="min-w-0">
@@ -80,7 +230,7 @@
                                     <a href="{{ post_url }}" class="block truncate px-3 py-2">{{ post.author_nickname }}</a>
                                 </td>
                                 <td class="p-0 text-center text-base-content/50">
-                                    <a href="{{ post_url }}" class="block px-3 py-2">{{ post.created_at[:10] }}</a>
+                                    <a href="{{ post_url }}" class="block px-3 py-2">{{ post.created_at[5:10] }}</a>
                                 </td>
                                 <td class="p-0 text-center text-base-content/50">
                                     <a href="{{ post_url }}" class="block px-3 py-2">{{ post.views }}</a>
@@ -108,4 +258,99 @@
         </div>
     </div>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    window.__dicoMobileBoardController?.abort();
+
+    const controller = new AbortController();
+    window.__dicoMobileBoardController = controller;
+    const { signal } = controller;
+    const root = document.querySelector('[data-mobile-board]');
+    if (!root) return;
+
+    const leftDrawer = document.getElementById('mobile-board-left');
+    const rightDrawer = document.getElementById('mobile-board-right');
+    const scrim = document.getElementById('mobile-board-scrim');
+    const searchPanel = document.getElementById('mobile-board-search');
+    const searchInput = document.getElementById('mobile-board-search-input');
+    let openedDrawer = null;
+    let touchStart = null;
+    let blockClickUntil = 0;
+
+    function setDrawer(side = null) {
+        openedDrawer = side;
+        const leftOpen = side === 'left';
+        const rightOpen = side === 'right';
+
+        leftDrawer.classList.toggle('is-open', leftOpen);
+        rightDrawer.classList.toggle('is-open', rightOpen);
+        scrim.classList.toggle('is-open', Boolean(side));
+        leftDrawer.setAttribute('aria-hidden', String(!leftOpen));
+        rightDrawer.setAttribute('aria-hidden', String(!rightOpen));
+        scrim.tabIndex = side ? 0 : -1;
+    }
+
+    root.querySelectorAll('[data-mobile-open]').forEach((button) => {
+        button.addEventListener('click', () => setDrawer(button.dataset.mobileOpen), { signal });
+    });
+
+    root.querySelectorAll('[data-mobile-close]').forEach((button) => {
+        button.addEventListener('click', () => setDrawer(), { signal });
+    });
+
+    scrim.addEventListener('click', () => setDrawer(), { signal });
+
+    root.querySelector('[data-mobile-search-toggle]')?.addEventListener('click', () => {
+        const willOpen = !searchPanel.classList.contains('is-open');
+        searchPanel.classList.toggle('is-open', willOpen);
+        if (willOpen) window.setTimeout(() => searchInput?.focus(), 190);
+    }, { signal });
+
+    root.addEventListener('touchstart', (event) => {
+        if (event.touches.length !== 1) return;
+        if (event.target.closest('[data-horizontal-scroll], input, textarea, select')) return;
+
+        const touch = event.touches[0];
+        touchStart = { x: touch.clientX, y: touch.clientY };
+    }, { passive: true, signal });
+
+    root.addEventListener('touchend', (event) => {
+        if (!touchStart || event.changedTouches.length !== 1) {
+            touchStart = null;
+            return;
+        }
+
+        const touch = event.changedTouches[0];
+        const deltaX = touch.clientX - touchStart.x;
+        const deltaY = touch.clientY - touchStart.y;
+        touchStart = null;
+
+        if (Math.abs(deltaX) < 68 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
+        blockClickUntil = Date.now() + 350;
+
+        if (openedDrawer === 'left' && deltaX < 0) return setDrawer();
+        if (openedDrawer === 'right' && deltaX > 0) return setDrawer();
+        if (openedDrawer) return;
+        setDrawer(deltaX > 0 ? 'left' : 'right');
+    }, { passive: true, signal });
+
+    root.addEventListener('click', (event) => {
+        if (Date.now() >= blockClickUntil) return;
+        event.preventDefault();
+        event.stopPropagation();
+    }, { capture: true, signal });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') setDrawer();
+    }, { signal });
+
+    window.addEventListener('app:navigation-start', () => {
+        setDrawer();
+        controller.abort();
+    }, { once: true, signal });
+})();
+</script>
 {% endblock %}
