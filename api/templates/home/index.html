@@ -48,7 +48,7 @@
         <button id="mobile-board-scrim" type="button" class="mobile-board-scrim fixed inset-0 z-40 bg-black/35 backdrop-blur-[1px]" aria-label="메뉴 닫기" tabindex="-1"></button>
 
         <!-- 오른쪽으로 밀면 열리는 게시판 메뉴 -->
-        <aside id="mobile-board-left" class="mobile-board-drawer mobile-board-drawer-left fixed bottom-0 left-0 top-0 z-50 flex w-[min(84vw,330px)] flex-col border-r border-base-300 bg-base-100 shadow-2xl" aria-hidden="true">
+        <!-- <aside id="mobile-board-left" class="mobile-board-drawer mobile-board-drawer-left fixed bottom-0 left-0 top-0 z-50 flex w-[min(84vw,330px)] flex-col border-r border-base-300 bg-base-100 shadow-2xl" aria-hidden="true">
             <div class="flex items-center justify-between border-b border-base-200 px-5 py-4">
                 <div><p class="text-xs font-semibold uppercase tracking-[.16em] text-primary">Dico.page</p><h2 class="mt-1 text-lg font-bold">게시판 둘러보기</h2></div>
                 <button type="button" class="btn btn-circle btn-ghost btn-sm" data-mobile-close aria-label="닫기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
@@ -69,7 +69,7 @@
             <div class="border-t border-base-200 p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
                 {% if current_user | default(none) %}<a href="{{ url_for('home.write') }}" class="btn btn-primary w-full">새 글 작성</a>{% else %}<a href="{{ url_for('auth.login', next=url_for('home.write')) }}" class="btn btn-primary w-full">로그인 후 글쓰기</a>{% endif %}
             </div>
-        </aside>
+        </aside> -->
 
         <!-- 왼쪽으로 밀면 열리는 빠른 메뉴 -->
         <aside id="mobile-board-right" class="mobile-board-drawer mobile-board-drawer-right fixed bottom-0 right-0 top-0 z-50 flex w-[min(82vw,320px)] flex-col border-l border-base-300 bg-base-100 shadow-2xl" aria-hidden="true">
