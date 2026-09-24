@@ -241,6 +241,98 @@
 {% block scripts %}
 <script>
 (() => {
+    window.__dicoMobileBoardController?.abort();
+
+    const controller = new AbortController();
+    window.__dicoMobileBoardController = controller;
+    const { signal } = controller;
+    const root = document.querySelector('[data-mobile-board]');
+    if (!root) return;
+
+    const leftDrawer = document.getElementById('mobile-board-left');
+    const rightDrawer = document.getElementById('mobile-board-right');
+    const scrim = document.getElementById('mobile-board-scrim');
+    const searchPanel = document.getElementById('mobile-board-search');
+    const searchInput = document.getElementById('mobile-board-search-input');
+    let openedDrawer = null;
+    let touchStart = null;
+    let blockClickUntil = 0;
+
+    function setDrawer(side = null) {
+        openedDrawer = side;
+        const leftOpen = side === 'left';
+        const rightOpen = side === 'right';
+
+        leftDrawer.classList.toggle('is-open', leftOpen);
+        rightDrawer.classList.toggle('is-open', rightOpen);
+        scrim.classList.toggle('is-open', Boolean(side));
+        leftDrawer.setAttribute('aria-hidden', String(!leftOpen));
+        rightDrawer.setAttribute('aria-hidden', String(!rightOpen));
+        scrim.tabIndex = side ? 0 : -1;
+    }
+
+    root.querySelectorAll('[data-mobile-open]').forEach((button) => {
+        button.addEventListener('click', () => setDrawer(button.dataset.mobileOpen), { signal });
+    });
+
+    root.querySelectorAll('[data-mobile-close]').forEach((button) => {
+        button.addEventListener('click', () => setDrawer(), { signal });
+    });
+
+    scrim.addEventListener('click', () => setDrawer(), { signal });
+
+    root.querySelector('[data-mobile-search-toggle]')?.addEventListener('click', () => {
+        const willOpen = !searchPanel.classList.contains('is-open');
+        searchPanel.classList.toggle('is-open', willOpen);
+        if (willOpen) window.setTimeout(() => searchInput?.focus(), 190);
+    }, { signal });
+
+    root.addEventListener('touchstart', (event) => {
+        if (event.touches.length !== 1) return;
+        if (event.target.closest('[data-horizontal-scroll], input, textarea, select')) return;
+
+        const touch = event.touches[0];
+        touchStart = { x: touch.clientX, y: touch.clientY };
+    }, { passive: true, signal });
+
+    root.addEventListener('touchend', (event) => {
+        if (!touchStart || event.changedTouches.length !== 1) {
+            touchStart = null;
+            return;
+        }
+
+        const touch = event.changedTouches[0];
+        const deltaX = touch.clientX - touchStart.x;
+        const deltaY = touch.clientY - touchStart.y;
+        touchStart = null;
+
+        if (Math.abs(deltaX) < 68 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
+        blockClickUntil = Date.now() + 350;
+
+        if (openedDrawer === 'left' && deltaX < 0) return setDrawer();
+        if (openedDrawer === 'right' && deltaX > 0) return setDrawer();
+        if (openedDrawer) return;
+        setDrawer(deltaX > 0 ? 'left' : 'right');
+    }, { passive: true, signal });
+
+    root.addEventListener('click', (event) => {
+        if (Date.now() >= blockClickUntil) return;
+        event.preventDefault();
+        event.stopPropagation();
+    }, { capture: true, signal });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') setDrawer();
+    }, { signal });
+
+    window.addEventListener('app:navigation-start', () => {
+        setDrawer();
+        controller.abort();
+    }, { once: true, signal });
+})();
+</script>
+<script>
+(() => {
     const shareButtons = [document.getElementById('share-button'), document.getElementById('share-button-bottom')].filter(Boolean);
     const likeButton = document.getElementById('like-button');
     const likeCount = document.getElementById('like-count');
