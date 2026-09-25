@@ -6,18 +6,27 @@
 <style>
     .dico-profile-activity {
         display: grid;
-        grid-auto-flow: column;
-        grid-template-rows: repeat(7, 0.78rem);
-        grid-auto-columns: 0.78rem;
+        grid-template-columns: repeat(53, minmax(0, 1fr));
         gap: 0.25rem;
-        width: max-content;
-        max-width: 100%;
-        margin-inline: auto;
+        width: 100%;
+        aspect-ratio: 53 / 7;
         padding: 0.25rem 0 0.5rem;
+        overflow: visible;
+    }
+    .dico-profile-week {
+        display: grid;
+        grid-template-rows: repeat(7, minmax(0, 1fr));
+        gap: 0.25rem;
+        min-width: 0;
+    }
+    .dico-profile-activity .dico-profile-cell {
+        width: 100%;
+        height: 100%;
+        min-width: 0;
     }
     .dico-profile-cell {
-        width: 0.78rem;
-        height: 0.78rem;
+        width: 0.9rem;
+        height: 0.9rem;
         border: 1px solid color-mix(in srgb, var(--color-base-content) 6%, transparent);
         border-radius: 0.2rem;
     }
@@ -27,19 +36,15 @@
     .dico-profile-cell.level-3 { background: color-mix(in srgb, var(--color-primary) 66%, var(--color-base-100)); }
     .dico-profile-cell.level-4 { background: var(--color-primary); }
     @media (max-width: 640px) {
-        .dico-profile-activity {
-            grid-template-rows: repeat(7, 0.68rem);
-            grid-auto-columns: 0.68rem;
-            gap: 0.2rem;
-        }
+        .dico-profile-activity { gap: 1px; }
+        .dico-profile-week { gap: 1px; }
         .dico-profile-cell { width: 0.68rem; height: 0.68rem; }
     }
 </style>
 
 <section class="min-h-[calc(100vh-4rem)] bg-base-200/60" data-async-page>
-    <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-6 lg:grid-cols-[250px_minmax(0,1fr)] lg:py-8">
+    <div class="mx-auto grid w-full max-w-[1320px] items-start gap-8 px-4 py-7 sm:px-6 lg:grid-cols-[320px_minmax(0,1fr)] lg:px-8 lg:py-10">
         {% include "profile/sidebar.html" %}
-
         <main class="min-w-0">
             <div class="breadcrumbs max-w-full py-0 text-sm text-base-content/50">
                 <ul>
@@ -51,22 +56,24 @@
 
             <div class="mb-5 mt-3">
                 <h2 class="text-2xl font-bold">{{ profile.nickname }}의 활동</h2>
-                <p class="mt-1 text-sm text-base-content/55">최근 30일 동안 커뮤니티에서 남긴 기록입니다.</p>
+                <p class="mt-1 text-sm text-base-content/55">최근 1년 동안 커뮤니티에서 남긴 기록입니다.</p>
             </div>
 
-            {% set activity_days = profile.activity_weeks | sum(start=[]) %}
-            {% set recent_activity_days = activity_days[-30:] %}
-            <section class="rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
+            <section class="rounded-2xl border border-base-300 bg-base-100 p-6 shadow-sm sm:p-8">
                 <div class="flex flex-wrap items-end justify-between gap-2">
                     <div>
                         <h3 class="font-bold">활동 잔디</h3>
-                        <p class="mt-1 text-xs text-base-content/50">최근 1개월(30일)의 게시글과 댓글 활동입니다.</p>
+                        <p class="mt-1 text-xs text-base-content/50">게시글과 댓글을 날짜별로 표시합니다.</p>
                     </div>
-                    <span class="text-sm font-medium text-primary">{{ recent_activity_days | sum(attribute='count') }}회 활동</span>
+                    <span class="text-sm font-medium text-primary">총 {{ profile.activity_total }}회 활동</span>
                 </div>
-                <div class="dico-profile-activity mt-5" role="list" aria-label="최근 30일 활동량">
-                    {% for cell in recent_activity_days %}
-                    <span role="listitem" class="dico-profile-cell level-{{ cell.level }}" title="{{ cell.date }} · {{ cell.count }}회 활동" aria-label="{{ cell.date }} {{ cell.count }}회 활동"></span>
+                <div class="dico-profile-activity mt-6" aria-label="최근 1년 활동량">
+                    {% for week in profile.activity_weeks %}
+                    <div class="dico-profile-week">
+                        {% for cell in week %}
+                        <span class="dico-profile-cell level-{{ cell.level }}" title="{{ cell.date }} · {{ cell.count }}회 활동" aria-label="{{ cell.date }} {{ cell.count }}회 활동"></span>
+                        {% endfor %}
+                    </div>
                     {% endfor %}
                 </div>
                 <div class="mt-3 flex items-center justify-end gap-2 text-[11px] text-base-content/45">
@@ -74,15 +81,15 @@
                 </div>
             </section>
 
-            <section class="mt-6 rounded-2xl border border-base-300 bg-base-100 shadow-sm">
-                <div class="flex items-center justify-between border-b border-base-200 px-5 py-4 sm:px-6">
+            <section class="mt-8 rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+                <div class="flex items-center justify-between border-b border-base-200 px-6 py-5 sm:px-8">
                     <div><h3 class="font-bold">최근 작성글</h3><p class="mt-1 text-xs text-base-content/45">최근에 작성한 게시글 10개</p></div>
                     <span class="badge badge-ghost">{{ profile.posts_count }}개</span>
                 </div>
                 {% if profile.posts %}
                 <div class="divide-y divide-base-200">
                     {% for post in profile.posts %}
-                    <a href="{{ url_for('home.post_detail', post_id=post.id) }}" class="flex min-w-0 items-center gap-3 px-5 py-4 transition hover:bg-base-200/50 sm:px-6">
+                    <a href="{{ url_for('home.post_detail', post_id=post.id) }}" class="flex min-w-0 items-center gap-3 px-6 py-5 transition hover:bg-base-200/50 sm:px-8">
                         <span class="badge badge-sm shrink-0 {% if post.category == 'question' %}badge-warning{% elif post.category == 'info' %}badge-info{% else %}badge-ghost{% endif %}">{{ {'general': '자유', 'question': '질문', 'info': '정보'}.get(post.category, '자유') }}</span>
                         <span class="min-w-0 flex-1 truncate font-medium hover:text-primary">{{ post.title }}</span>
                         {% if post.comment_count %}<span class="shrink-0 text-xs font-semibold text-primary">[{{ post.comment_count }}]</span>{% endif %}
@@ -90,18 +97,18 @@
                     </a>
                     {% endfor %}
                 </div>
-                {% else %}<p class="px-5 py-12 text-center text-sm text-base-content/45">아직 작성한 게시글이 없습니다.</p>{% endif %}
+                {% else %}<p class="px-6 py-16 text-center text-sm text-base-content/45">아직 작성한 게시글이 없습니다.</p>{% endif %}
             </section>
 
-            <section class="mt-6 rounded-2xl border border-base-300 bg-base-100 shadow-sm">
-                <div class="flex items-center justify-between border-b border-base-200 px-5 py-4 sm:px-6">
+            <section class="mt-8 rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+                <div class="flex items-center justify-between border-b border-base-200 px-6 py-5 sm:px-8">
                     <div><h3 class="font-bold">최근 작성 댓글</h3><p class="mt-1 text-xs text-base-content/45">최근에 남긴 댓글 10개</p></div>
                     <span class="badge badge-ghost">{{ profile.comments_count }}개</span>
                 </div>
                 {% if profile.comments %}
                 <div class="divide-y divide-base-200">
                     {% for comment in profile.comments %}
-                    <a href="{{ url_for('home.post_detail', post_id=comment.post_id) }}#comments" class="block px-5 py-4 transition hover:bg-base-200/50 sm:px-6">
+                    <a href="{{ url_for('home.post_detail', post_id=comment.post_id) }}#comments" class="block px-6 py-5 transition hover:bg-base-200/50 sm:px-8">
                         <div class="flex items-center justify-between gap-3">
                             <p class="min-w-0 truncate text-sm font-medium">{{ comment.post_title }}</p>
                             <time class="shrink-0 text-xs text-base-content/40" datetime="{{ comment.created_at }}">{{ comment.created_at[:16].replace('T', ' ') }}</time>
@@ -110,7 +117,7 @@
                     </a>
                     {% endfor %}
                 </div>
-                {% else %}<p class="px-5 py-12 text-center text-sm text-base-content/45">아직 작성한 댓글이 없습니다.</p>{% endif %}
+                {% else %}<p class="px-6 py-16 text-center text-sm text-base-content/45">아직 작성한 댓글이 없습니다.</p>{% endif %}
             </section>
         </main>
     </div>
