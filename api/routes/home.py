@@ -222,7 +222,7 @@ def _get_posts_sync(search, category, page, per_page):
     total_pages = max(1, math.ceil(total / per_page))
     page = min(max(page, 1), total_pages)
     rows = list(
-        posts_collection.find(filters, {"_id": 0, "images": 0}).sort("id", -1)
+        posts_collection.find(filters, {"_id": 0, "images": 0, "files": 0}).sort("id", -1)
         .skip((page - 1) * per_page).limit(per_page)
     )
     for row in rows:
@@ -240,6 +240,7 @@ def _create_post_sync(title, content, category, media_url, author_id, author_nic
         "category": category,
         "media_url": media_url or None,
         "images": images or [],
+        "files": [],
         "author_id": int(author_id),
         "author_nickname": author_nickname,
         "views": 0,

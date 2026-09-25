@@ -1,0 +1,13 @@
+{% if files %}
+<section class="mt-8 border-t border-base-200 pt-6" aria-label="일반 첨부파일">
+    <h2 class="mb-4 text-base font-semibold">첨부파일 {{ files | length }}개</h2>
+    <ul class="space-y-2">
+        {% for file in files %}
+        <li class="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-base-200 px-4 py-3 text-sm">
+            <span class="min-w-0 truncate" title="{{ file.name }}">{{ file.name }}</span>
+            <a data-dico-download href="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=file.id) }}" download="{{ file.name }}" class="shrink-0 font-medium text-primary hover:underline" aria-label="{{ file.name }} 다운로드">다운로드</a>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}

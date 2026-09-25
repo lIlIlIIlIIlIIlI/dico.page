@@ -150,13 +150,14 @@
                         {% if post.media_kind == 'youtube' %}<div class="aspect-video bg-black"><iframe src="{{ post.media_src }}" title="게시글 동영상" class="size-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>
                         {% elif post.media_kind == 'instagram' %}<div class="dico-media dico-instagram-media"><iframe src="{{ post.media_src }}" title="Instagram 게시물" class="dico-media-frame dico-media-instagram-frame" loading="lazy" scrolling="no" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowfullscreen></iframe></div>
                         {% elif post.media_kind == 'image' %}<img src="{{ post.media_src }}" alt="게시글 첨부 이미지" class="max-h-[640px] w-full object-contain">
-                        {% elif post.media_kind == 'video' %}<video src="{{ post.media_src }}" controls preload="metadata" class="max-h-[640px] w-full bg-black"></video>
+                        {% elif post.media_kind == 'video' %}<video src="{{ post.media_src }}" controls preload="metadata" playsinline data-dico-player class="aspect-video w-full bg-black object-contain"></video>
                         {% else %}<a href="{{ post.media_src }}" target="_blank" rel="noopener noreferrer" class="flex min-h-40 items-center justify-center p-6 text-center text-primary hover:bg-base-200">첨부 링크 열기</a>{% endif %}
                     </div>
                     {% endif %}
 
                     <div class="markdown-body dico-markdown min-h-56">{{ post.content_html | safe }}</div>
                     {% with images=post.images | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_images.html" %}{% endwith %}
+                    {% with files=post.files | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_files.html" %}{% endwith %}
                     <div class="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-base-300 pt-5">
                         <button id="mobile-like-button" data-like-button type="button" class="btn btn-ghost btn-sm gap-2 {% if liked %}text-error{% endif %}" data-liked="{{ 'true' if liked else 'false' }}"><span data-like-icon>{{ '♥' if liked else '♡' }}</span>좋아요 <span data-like-count>{{ post.like_count }}</span></button>
                         <button id="mobile-share-button-bottom" data-share-button type="button" class="btn btn-ghost btn-sm">공유</button>
@@ -225,13 +226,14 @@
                         {% if post.media_kind == 'youtube' %}<div class="aspect-video bg-black"><iframe src="{{ post.media_src }}" title="게시글 동영상" class="size-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>
                         {% elif post.media_kind == 'instagram' %}<div class="dico-media dico-instagram-media"><iframe src="{{ post.media_src }}" title="Instagram 게시물" class="dico-media-frame dico-media-instagram-frame" loading="lazy" scrolling="no" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" allowfullscreen></iframe></div>
                         {% elif post.media_kind == 'image' %}<img src="{{ post.media_src }}" alt="게시글 첨부 이미지" class="max-h-[640px] w-full object-contain">
-                        {% elif post.media_kind == 'video' %}<video src="{{ post.media_src }}" controls preload="metadata" class="max-h-[640px] w-full bg-black"></video>
+                        {% elif post.media_kind == 'video' %}<video src="{{ post.media_src }}" controls preload="metadata" playsinline data-dico-player class="aspect-video w-full bg-black object-contain"></video>
                         {% else %}<a href="{{ post.media_src }}" target="_blank" rel="noopener noreferrer" class="flex min-h-40 items-center justify-center p-6 text-center text-primary hover:bg-base-200">첨부 링크 열기</a>{% endif %}
                     </div>
                     {% endif %}
 
                     <div class="markdown-body dico-markdown min-h-56">{{ post.content_html | safe }}</div>
                     {% with images=post.images | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_images.html" %}{% endwith %}
+                    {% with files=post.files | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_files.html" %}{% endwith %}
                     <div class="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-base-300 pt-5">
                         <button id="like-button" data-like-button type="button" class="btn btn-ghost btn-sm gap-2 {% if liked %}text-error{% endif %}" data-liked="{{ 'true' if liked else 'false' }}"><span id="like-icon" data-like-icon>{{ '♥' if liked else '♡' }}</span>좋아요 <span id="like-count" data-like-count>{{ post.like_count }}</span></button>
                         <button id="share-button-bottom" data-share-button type="button" class="btn btn-ghost btn-sm">공유</button>

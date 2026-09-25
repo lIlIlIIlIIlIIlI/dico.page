@@ -48,6 +48,7 @@
                     </div>
                 </div>
                 {% include "layout/image_attachments.html" %}
+                {% include "layout/file_attachments.html" %}
                 <div class="flex justify-end gap-2 border-t border-base-300 pt-5"><a href="{{ url_for('home.index') }}" class="btn btn-ghost">취소</a><button type="submit" class="btn btn-primary">등록</button></div>
             </form>
         </div>
@@ -61,6 +62,7 @@
     const form = document.getElementById('post-write-form');
     if (!form) return;
     const imageAttachments = window.DicoImageAttachments.mount(form);
+    const fileAttachments = window.DicoFileAttachments.mount(form);
 
     const contentInput = document.getElementById('post-content');
     const preview = document.getElementById('markdown-preview');
@@ -300,6 +302,7 @@
         try {
             await imageAttachments.ready();
             await imageAttachments.preflight();
+            await fileAttachments.preflight();
             if (!savedPost) {
                 const response = await fetch(form.action, {
                     method: 'POST',
@@ -316,6 +319,7 @@
                 savedPost = data;
             }
             await imageAttachments.uploadAll('posts', savedPost.post_id, csrfToken);
+            await fileAttachments.uploadAll('posts', savedPost.post_id, csrfToken);
             await window.appNavigate(savedPost.redirect);
         } catch (error) {
             window.alert(error.message || '서버와 통신하지 못했습니다.');

@@ -6,6 +6,81 @@ from api.routes.module import media_storage as media
 
 
 class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_file_upload_commits_into_separate_attachment_folder(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        payload = b"%PDF-sample"
+
+        class Uploads:
+            state = None
+
+            def find_one(self, query):
+                return self.state
+
+            def update_one(self, query, changes, upsert=False):
+                if self.state is None:
+                    self.state = dict(changes["$setOnInsert"], chunks={})
+                self.state["chunks"]["0"] = changes["$set"]["chunks.0"]
+
+            def delete_one(self, query):
+                self.state = None
+
+        async def writable(kind, item_id):
+            return {"files": []}, None
+
+        uploads = Uploads()
+        client = app.test_client()
+        async with client.session_transaction() as session:
+            session["user_id"] = 1
+
+        base = "/api/media/posts/1/files/" + media_id
+        args = "?name=sample.pdf&mime=application%2Foctet-stream&size=" + str(len(payload)) + "&count=1"
+        with patch.object(media, "_write_target", writable), patch.object(media, "collection", return_value=uploads), patch.object(media, "_blob", return_value="a" * 40), patch.object(media, "_commit_blobs") as commit, patch.object(media, "_save_attachment", return_value=True) as save:
+            part = await client.post(base + "/chunks/0" + args, data=payload, headers={"Content-Type": "application/octet-stream"})
+            self.assertEqual(part.status_code, 200)
+            complete = await client.post(base + "/complete", json={})
+            self.assertEqual(complete.status_code, 200)
+            self.assertEqual(commit.call_args.args[0][0][0], "게시글/1/첨부파일/" + media_id + "/0000.part")
+            self.assertEqual(save.call_args.args[3], "files")
+
+    async def test_file_upload_rejects_extension_with_invalid_signature(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+
+        async def writable(kind, item_id):
+            return {"images": [], "files": []}, None
+
+        with patch.object(media, "_write_target", writable), patch.object(media, "_blob") as write:
+            response = await app.test_client().post(
+                "/api/media/posts/1/files/" + media_id + "/chunks/0?name=report.pdf&mime=application%2Foctet-stream&size=5&count=1",
+                data=b"hello", headers={"Content-Type": "application/octet-stream"},
+            )
+            self.assertEqual(response.status_code, 400)
+            write.assert_not_called()
+
+    async def test_downloaded_file_contains_all_chunks(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        first = b"a" * media.CHUNK_BYTES
+        last = b"xyz"
+        document = {"files": [{
+            "id": media_id, "kind": "file", "name": "자료.pdf",
+            "mime": "application/octet-stream", "size": len(first) + len(last),
+            "chunks": [{"sha": "a" * 40, "size": len(first)}, {"sha": "b" * 40, "size": len(last)}],
+        }]}
+
+        async def ready():
+            return None
+
+        with patch.object(media, "ensure_database", ready), patch.object(media, "_document", return_value=document), patch.object(media, "_read_blob", side_effect=lambda sha: first if sha == "a" * 40 else last):
+            client = app.test_client()
+            async with app.test_request_context("/media/posts/1/" + media_id, method="HEAD"):
+                head = await media.serve_media("posts", 1, media_id)
+                self.assertEqual(head.headers["Content-Length"], str(len(first) + len(last)))
+            response = await client.get("/media/posts/1/" + media_id)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(await response.get_data(), first + last)
+            self.assertEqual(response.headers["Content-Length"], str(len(first) + len(last)))
+            self.assertIn("attachment; filename*=UTF-8''", response.headers["Content-Disposition"])
+            self.assertEqual(response.headers["Content-Type"], "application/octet-stream")
+
     async def test_video_range_returns_requested_chunk_without_joining_entire_video(self):
         media_id = "11111111-1111-4111-8111-111111111111"
         first = b"a" * media.CHUNK_BYTES

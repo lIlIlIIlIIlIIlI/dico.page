@@ -22,6 +22,7 @@ MAX_VIDEO_BYTES = 20 * 1024 * 1024
 MAX_ATTACHMENTS = 5
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 VIDEO_TYPES = {"video/mp4": "mp4", "video/webm": "webm", "video/ogg": "ogv"}
+FILE_TYPES = {".pdf", ".zip", ".txt", ".csv", ".hwp", ".hwpx", ".docx", ".xlsx", ".pptx"}
 MEDIA_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 
 
@@ -99,7 +100,7 @@ def _commit_blobs(files, message):
 
 def _document(kind, item_id):
     return collection("posts" if kind == "posts" else "notices").find_one(
-        {"id": item_id}, {"_id": 0, "id": 1, "author_id": 1, "images": 1}
+        {"id": item_id}, {"_id": 0, "id": 1, "author_id": 1, "images": 1, "files": 1}
     )
 
 
@@ -147,11 +148,11 @@ def _folder(kind):
     return "게시글" if kind == "posts" else "공지"
 
 
-def _save_attachment(kind, item_id, media):
+def _save_attachment(kind, item_id, media, field="images"):
     target = collection("posts" if kind == "posts" else "notices")
     result = target.update_one(
-        {"id": item_id, "images.id": {"$ne": media["id"]}, "images.4": {"$exists": False}},
-        {"$push": {"images": media}},
+        {"id": item_id, field + ".id": {"$ne": media["id"]}, field + ".4": {"$exists": False}},
+        {"$push": {field: media}},
     )
     return result.modified_count == 1
 
@@ -210,10 +211,20 @@ async def upload_image(kind, item_id, media_id):
 
 @media_bp.post("/api/media/<kind>/<int:item_id>/videos/<media_id>/chunks/<int:index>")
 async def upload_video_chunk(kind, item_id, media_id, index):
+    return await _upload_chunk(kind, item_id, media_id, index, "video")
+
+
+@media_bp.post("/api/media/<kind>/<int:item_id>/files/<media_id>/chunks/<int:index>")
+async def upload_file_chunk(kind, item_id, media_id, index):
+    return await _upload_chunk(kind, item_id, media_id, index, "file")
+
+
+async def _upload_chunk(kind, item_id, media_id, index, media_kind):
     doc, problem = await _write_target(kind, item_id)
     if problem:
         return problem
-    if len(doc.get("images", [])) >= MAX_ATTACHMENTS:
+    field = "images" if media_kind == "video" else "files"
+    if len(doc.get(field, [])) >= MAX_ATTACHMENTS:
         return jsonify({"success": False, "message": "첨부는 최대 5개까지 가능합니다."}), 400
     if not MEDIA_ID.fullmatch(media_id):
         abort(400)
@@ -224,15 +235,31 @@ async def upload_video_chunk(kind, item_id, media_id, index):
         count = int(request.args["count"])
     except (KeyError, ValueError) as exc:
         return jsonify({"success": False, "message": "영상 정보가 올바르지 않습니다."}), 400
-    if mime not in VIDEO_TYPES or not 0 < size <= MAX_VIDEO_BYTES or count != math.ceil(size / CHUNK_BYTES) or not 0 <= index < count:
-        return jsonify({"success": False, "message": "영상 형식 또는 크기가 올바르지 않습니다."}), 400
+    if media_kind == "video":
+        valid_type = mime in VIDEO_TYPES
+    else:
+        valid_type = mime == "application/octet-stream" and os.path.splitext(name)[1].lower() in FILE_TYPES
+    if not valid_type or not 0 < size <= MAX_VIDEO_BYTES or count != math.ceil(size / CHUNK_BYTES) or not 0 <= index < count:
+        return jsonify({"success": False, "message": "파일 형식 또는 크기가 올바르지 않습니다."}), 400
     expected = min(CHUNK_BYTES, size - index * CHUNK_BYTES)
     if request.content_length and request.content_length > expected:
         return jsonify({"success": False, "message": "영상 조각의 크기가 초과되었습니다."}), 413
     data = await request.get_data()
-    if len(data) != expected or (index == 0 and not _signature(mime, data)):
-        return jsonify({"success": False, "message": "영상 조각이 올바르지 않습니다."}), 400
-    key = _upload_key(kind, item_id, media_id)
+    if media_kind == "file":
+        extension = os.path.splitext(name)[1].lower()
+        if extension in {".txt", ".csv"}:
+            valid_signature = True
+        elif extension == ".pdf":
+            valid_signature = data.startswith(b"%PDF-")
+        elif extension == ".hwp":
+            valid_signature = data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
+        else:
+            valid_signature = data.startswith(b"PK\x03\x04")
+    else:
+        valid_signature = _signature(mime, data)
+    if len(data) != expected or (index == 0 and not valid_signature):
+        return jsonify({"success": False, "message": "파일 조각이 올바르지 않습니다."}), 400
+    key = ("file:" if media_kind == "file" else "") + _upload_key(kind, item_id, media_id)
     uploads = collection("media_uploads")
     state = await asyncio.to_thread(uploads.find_one, {"_id": key})
     if state and (state["user_id"] != session["user_id"] or state["size"] != size or state["mime"] != mime or state["name"] != name or state["count"] != count):
@@ -254,19 +281,29 @@ async def upload_video_chunk(kind, item_id, media_id, index):
 
 @media_bp.post("/api/media/<kind>/<int:item_id>/videos/<media_id>/complete")
 async def complete_video(kind, item_id, media_id):
+    return await _complete_chunks(kind, item_id, media_id, "video")
+
+
+@media_bp.post("/api/media/<kind>/<int:item_id>/files/<media_id>/complete")
+async def complete_file(kind, item_id, media_id):
+    return await _complete_chunks(kind, item_id, media_id, "file")
+
+
+async def _complete_chunks(kind, item_id, media_id, media_kind):
     doc, problem = await _write_target(kind, item_id)
     if problem:
         return problem
     if not MEDIA_ID.fullmatch(media_id):
         abort(400)
-    if any(item.get("id") == media_id for item in doc.get("images", [])):
+    field = "images" if media_kind == "video" else "files"
+    if any(item.get("id") == media_id for item in doc.get(field, [])):
         return jsonify({"success": True, "url": url_for("media.serve_media", kind=kind, item_id=item_id, media_id=media_id)})
-    key = _upload_key(kind, item_id, media_id)
+    key = ("file:" if media_kind == "file" else "") + _upload_key(kind, item_id, media_id)
     uploads = collection("media_uploads")
     state = await asyncio.to_thread(uploads.find_one, {"_id": key})
     if not state or state["user_id"] != session["user_id"]:
         return jsonify({"success": False, "message": "영상 업로드를 찾을 수 없습니다."}), 404
-    if len(doc.get("images", [])) >= MAX_ATTACHMENTS:
+    if len(doc.get(field, [])) >= MAX_ATTACHMENTS:
         return jsonify({"success": False, "message": "첨부는 최대 5개까지 가능합니다."}), 400
     chunks = state.get("chunks", {})
     if len(chunks) != state["count"] or sum(part["size"] for part in chunks.values()) != state["size"]:
@@ -274,15 +311,15 @@ async def complete_video(kind, item_id, media_id):
     parts = [chunks.get(str(index)) for index in range(state["count"])]
     if any(part is None for part in parts):
         return jsonify({"success": False, "message": "누락된 영상 조각이 있습니다."}), 409
-    prefix = _folder(kind) + "/" + str(item_id) + "/영상/" + media_id + "/"
+    prefix = _folder(kind) + "/" + str(item_id) + ("/영상/" if media_kind == "video" else "/첨부파일/") + media_id + "/"
     files = [(prefix + str(index).zfill(4) + ".part", part["sha"]) for index, part in enumerate(parts)]
     try:
         await asyncio.to_thread(_commit_blobs, files, "Upload video " + prefix)
         media = {
-            "id": media_id, "name": state["name"], "kind": "video", "mime": state["mime"],
+            "id": media_id, "name": state["name"], "kind": media_kind, "mime": state["mime"],
             "size": state["size"], "chunks": parts,
         }
-        saved = await asyncio.to_thread(_save_attachment, kind, item_id, media)
+        saved = await asyncio.to_thread(_save_attachment, kind, item_id, media, field)
     except MediaStorageError as exc:
         return jsonify({"success": False, "message": str(exc)}), 502
     if not saved:
@@ -297,14 +334,19 @@ async def serve_media(kind, item_id, media_id):
         abort(404)
     await ensure_database()
     doc = await asyncio.to_thread(_document, kind, item_id)
-    media = next((item for item in (doc or {}).get("images", []) if item.get("id") == media_id), None)
+    media = next((item for field in ("images", "files") for item in (doc or {}).get(field, []) if item.get("id") == media_id), None)
     if not media:
         abort(404)
     size = media["size"]
     headers = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff"}
+    download = media["kind"] == "file" or request.args.get("download") == "1"
+    if download:
+        headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + quote(media.get("name") or "attachment", safe="")
+    content_type = "application/octet-stream" if media["kind"] == "file" else media["mime"]
     if request.method == "HEAD":
-        headers["Content-Length"] = str(size)
-        return Response(b"", status=200, headers=headers, content_type=media["mime"])
+        response = Response(b"", status=200, headers=headers, content_type=content_type)
+        response.content_length = size
+        return response
     if media["kind"] == "image":
         try:
             data = await asyncio.to_thread(_read_blob, media["sha"])
@@ -312,7 +354,20 @@ async def serve_media(kind, item_id, media_id):
             abort(502)
         if len(data) != size:
             abort(502)
-        return Response(data, status=200, headers=headers, content_type=media["mime"])
+        return Response(data, status=200, headers=headers, content_type=content_type)
+
+    if not request.headers.get("Range") and download:
+        async def stream():
+            for part in media["chunks"]:
+                chunk = await asyncio.to_thread(_read_blob, part["sha"])
+                if len(chunk) != part["size"]:
+                    raise MediaStorageError("저장된 파일 크기가 올바르지 않습니다.")
+                yield chunk
+
+        headers["Content-Length"] = str(size)
+        response = Response(stream(), status=200, headers=headers, content_type=content_type)
+        response.timeout = None
+        return response
 
     range_value = request.headers.get("Range", "")
     match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_value)
@@ -339,4 +394,4 @@ async def serve_media(kind, item_id, media_id):
     if len(chunk) != part["size"]:
         abort(502)
     headers["Content-Range"] = "bytes " + str(start) + "-" + str(end) + "/" + str(size)
-    return Response(chunk[offset:offset + end - start + 1], status=206, headers=headers, content_type=media["mime"])
+    return Response(chunk[offset:offset + end - start + 1], status=206, headers=headers, content_type=content_type)

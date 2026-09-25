@@ -229,7 +229,7 @@ async def create_notice():
             ))
             delivered_count += sum(result is not None for result in results)
 
-    notice_summary = {key: value for key, value in notice.items() if key != "images"}
+    notice_summary = {key: value for key, value in notice.items() if key not in {"images", "files"}}
     await publish_admin_event("notice-created", {"notice": notice_summary})
     return jsonify({
         "success": True,
