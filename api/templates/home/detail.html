@@ -155,6 +155,7 @@
                     </div>
                     {% endif %}
 
+                    {% with images=post.images | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_videos.html" %}{% endwith %}
                     <div class="markdown-body dico-markdown min-h-56">{{ post.content_html | safe }}</div>
                     {% with images=post.images | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_images.html" %}{% endwith %}
                     {% with files=post.files | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_files.html" %}{% endwith %}
@@ -231,6 +232,7 @@
                     </div>
                     {% endif %}
 
+                    {% with images=post.images | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_videos.html" %}{% endwith %}
                     <div class="markdown-body dico-markdown min-h-56">{{ post.content_html | safe }}</div>
                     {% with images=post.images | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_images.html" %}{% endwith %}
                     {% with files=post.files | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_files.html" %}{% endwith %}
