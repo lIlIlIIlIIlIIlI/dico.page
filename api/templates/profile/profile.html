@@ -56,33 +56,12 @@
         border-radius: 6px;
         background: #fff;
     }
-    .dico-profile-contributions { padding: 18px 20px 14px; }
-    .dico-profile-month-grid {
+    .dico-profile-contributions { padding: 18px 20px 14px; container-type: inline-size; }
+    .dico-profile-weeks {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 12px;
-    }
-    .dico-profile-month {
-        min-width: 0;
-        padding: 12px;
-        border: 1px solid #eaeef2;
-        border-radius: 6px;
-        background: #fff;
-    }
-    .dico-profile-month-title {
-        display: block;
-        margin-bottom: 10px;
-        font-size: 12px;
-        font-weight: 600;
-        white-space: nowrap;
-    }
-    .dico-profile-month-title small { display: block; margin-top: 2px; color: var(--profile-muted); font-size: 11px; font-weight: 400; }
-    .dico-profile-month-weeks {
-        display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
+        grid-template-columns: repeat(53, minmax(0, 1fr));
         gap: 3px;
         width: 100%;
-        max-width: 135px;
     }
     .dico-profile-week {
         display: flex;
@@ -144,11 +123,11 @@
     .dico-profile-tag { flex-shrink: 0; padding: 1px 7px; border: 1px solid var(--profile-border); border-radius: 12px; color: var(--profile-muted); font-size: 11px; }
     .dico-profile-excerpt { margin-top: 5px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--profile-muted); font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
     .dico-profile-empty { padding: 34px 18px; text-align: center; color: var(--profile-muted); font-size: 13px; }
-    @media (max-width: 1199px) {
-        .dico-profile-month-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    @container (max-width: 740px) {
+        .dico-profile-weeks { grid-template-columns: repeat(27, minmax(0, 1fr)); }
     }
-    @media (max-width: 900px) {
-        .dico-profile-month-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    @container (max-width: 420px) {
+        .dico-profile-weeks { grid-template-columns: repeat(18, minmax(0, 1fr)); }
     }
     @media (max-width: 767px) {
         .dico-profile-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 20px 16px 48px; }
@@ -159,10 +138,6 @@
         .dico-profile-row-title small { display: none; }
     }
     @media (max-width: 380px) {
-        .dico-profile-month-grid { gap: 8px; }
-        .dico-profile-month { padding: 9px; }
-        .dico-profile-month-title { font-size: 11px; }
-        .dico-profile-month-title small { font-size: 10px; }
         .dico-profile-overview { grid-template-columns: 1fr; }
     }
 </style>
@@ -180,24 +155,17 @@
                 <p>{{ profile.activity_start }} ~ {{ profile.activity_end }}</p>
             </div>
             <section class="dico-profile-card dico-profile-contributions" aria-label="최근 1년 활동 잔디">
-                <div class="dico-profile-month-grid">
-                    {% for month in profile.activity_months %}
-                    <section class="dico-profile-month" aria-label="{{ month.label }} 활동">
-                        <h3 class="dico-profile-month-title"><span>{{ month.label }}</span><small>{{ month.total }}회</small></h3>
-                        <div class="dico-profile-month-weeks">
-                            {% for week in month.weeks %}
-                            <div class="dico-profile-week">
-                                {% for cell in week.days %}
-                                {% if cell %}
-                                <time class="dico-profile-cell level-{{ cell.level }}" datetime="{{ cell.date }}" title="{{ cell.date }} · {{ cell.count }}회 활동" aria-label="{{ cell.date }} {{ cell.count }}회 활동"></time>
-                                {% else %}
-                                <span class="dico-profile-cell is-outside" aria-hidden="true"></span>
-                                {% endif %}
-                                {% endfor %}
-                            </div>
-                            {% endfor %}
-                        </div>
-                    </section>
+                <div class="dico-profile-weeks" aria-label="날짜별 활동량">
+                    {% for week in profile.activity_weeks %}
+                    <div class="dico-profile-week">
+                        {% for cell in week %}
+                        {% if cell.outside %}
+                        <span class="dico-profile-cell is-outside" aria-hidden="true"></span>
+                        {% else %}
+                        <time class="dico-profile-cell level-{{ cell.level }}" datetime="{{ cell.date }}" title="{{ cell.date }} · {{ cell.count }}회 활동" aria-label="{{ cell.date }} {{ cell.count }}회 활동"></time>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
                     {% endfor %}
                 </div>
                 <div class="dico-profile-legend" aria-label="활동량: 옅은색부터 짙은색까지">
