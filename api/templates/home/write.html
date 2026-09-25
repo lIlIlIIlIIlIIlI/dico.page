@@ -65,6 +65,7 @@
     const draft = window.DicoMediaDraft.mount(form, 'posts');
     const imageAttachments = window.DicoImageAttachments.mount(form, {kind: 'posts', ensureDraft: draft.ensureDraft, contentInput: form.querySelector('[name="content"]')});
     draft.setWaitForUploads(imageAttachments.ready);
+    draft.setStopUploads(imageAttachments.stop);
     const fileAttachments = window.DicoFileAttachments.mount(form);
 
     const contentInput = document.getElementById('post-content');
@@ -364,6 +365,7 @@
 
     form.querySelector('[data-post-cancel]').addEventListener('click', async event => {
         event.preventDefault();
+        imageAttachments.stop();
         imageAttachments.freeze();
         try {
             await imageAttachments.ready();

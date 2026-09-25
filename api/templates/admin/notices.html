@@ -132,6 +132,7 @@
     const draft = window.DicoMediaDraft.mount(form, 'notices');
     const imageAttachments = window.DicoImageAttachments.mount(form, {kind: 'notices', ensureDraft: draft.ensureDraft, contentInput: form.querySelector('[name="content"]')});
     draft.setWaitForUploads(imageAttachments.ready);
+    draft.setStopUploads(imageAttachments.stop);
     const fileAttachments = window.DicoFileAttachments.mount(form);
     const titleInput = document.getElementById('notice-title');
     const contentInput = document.getElementById('notice-content');
@@ -523,6 +524,7 @@
 
     document.getElementById('notice-cancel').addEventListener('click', async () => {
         if (savedNotice) { showMessage('이미 등록된 공지입니다. 첨부파일 전송을 다시 시도해 주세요.', 'error'); return; }
+        imageAttachments.stop();
         imageAttachments.freeze();
         try {
             await imageAttachments.ready();

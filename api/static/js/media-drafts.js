@@ -6,6 +6,7 @@ window.DicoMediaDraft = window.DicoMediaDraft || (() => {
         let reservation = null;
         let finished = false;
         let waitForUploads = () => Promise.resolve();
+        let stopUploads = () => {};
 
         function url() {
             return '/api/media/drafts/' + kind + '/' + id + '/cancel';
@@ -61,7 +62,9 @@ window.DicoMediaDraft = window.DicoMediaDraft || (() => {
         }
 
         function beacon() {
-            if (finished || !id) return;
+            if (finished) return;
+            stopUploads();
+            if (!id) return;
             const data = new FormData();
             data.append('csrf_token', csrfToken);
             navigator.sendBeacon?.(url(), data);
@@ -71,6 +74,7 @@ window.DicoMediaDraft = window.DicoMediaDraft || (() => {
         async function navigationCleanup() {
             if (finished) return;
             try {
+                stopUploads();
                 await waitForUploads();
                 await cancel();
             } catch (_) {
@@ -80,7 +84,9 @@ window.DicoMediaDraft = window.DicoMediaDraft || (() => {
 
         window.addEventListener('app:navigation-start', navigationCleanup);
         window.addEventListener('pagehide', beacon);
-        return {ensureDraft, cancel, complete, finish, id: () => id, setWaitForUploads: callback => { waitForUploads = callback; }};
+        return {ensureDraft, cancel, complete, finish, id: () => id,
+            setWaitForUploads: callback => { waitForUploads = callback; },
+            setStopUploads: callback => { stopUploads = callback; }};
     }
 
     return {mount};
