@@ -29,7 +29,7 @@
                 </header>
 
                 <div class="p-5 sm:p-7">
-                    {% with images=notice.images | default([]), kind="notices", item_id=notice.id %}{% include "layout/attached_videos.html" %}{% endwith %}
+                    {% with images=notice.images | default([]), kind="notices", item_id=notice.id, inline_video_ids=notice.inline_video_ids %}{% include "layout/attached_videos.html" %}{% endwith %}
                     <div class="markdown-body dico-markdown min-h-64">{{ notice.content_html | default(notice.content) | safe }}</div>
                 </div>
                 {% if notice.images | default([]) | rejectattr('kind', 'equalto', 'video') | list %}
