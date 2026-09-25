@@ -38,8 +38,8 @@ def _profile_activity_grid(events, today=None):
     counts = {}
     for event in events:
         day = str(event.get("day") or "")[:10]
-        if day:
-            counts[day] = int(event.get("count") or 0)
+        if first_day.isoformat() <= day <= today.isoformat():
+            counts[day] = counts.get(day, 0) + int(event.get("count") or 0)
 
     def level(count):
         if count <= 0:
@@ -58,8 +58,9 @@ def _profile_activity_grid(events, today=None):
         for day_index in range(7):
             current = grid_start + timedelta(days=week_index * 7 + day_index)
             key = current.isoformat()
-            count = counts.get(key, 0)
-            week.append({"date": key, "count": count, "level": level(count)})
+            outside = current < first_day or current > today
+            count = 0 if outside else counts.get(key, 0)
+            week.append({"date": key, "count": count, "level": level(count), "outside": outside})
         weeks.append(week)
     return weeks, sum(counts.values())
 
@@ -104,13 +105,23 @@ def _get_profile_sync(user_uid):
     events = {}
     for item in list(collection("posts").find({"author_id": user_id}, {"created_at": 1, "_id": 0})) + list(collection("comments").find({"author_id": user_id}, {"created_at": 1, "_id": 0})):
         day = str(item.get("created_at", ""))[:10]
-        if day >= first_day.isoformat():
+        if first_day.isoformat() <= day <= today.isoformat():
             events[day] = events.get(day, 0) + 1
 
     activity_weeks, activity_total = _profile_activity_grid(
         [{"day": day, "count": count} for day, count in events.items()],
         today,
     )
+    activity_months = []
+    last_month = None
+    for week_index, week in enumerate(activity_weeks):
+        for cell in week:
+            if cell["outside"]:
+                continue
+            month = cell["date"][:7]
+            if month != last_month:
+                activity_months.append({"label": f"{int(month[5:]):02d}월", "week": week_index})
+                last_month = month
     profile = dict(user)
     profile.update({
         "avatar_url": profile_document.get("avatar_url", "") or "",
@@ -121,6 +132,10 @@ def _get_profile_sync(user_uid):
         "comments_count": int(comments_count),
         "likes_received": int(likes_received),
         "activity_weeks": activity_weeks,
+        "activity_months": activity_months,
+        "activity_year": today.year,
+        "activity_start": first_day.isoformat(),
+        "activity_end": today.isoformat(),
         "activity_total": int(activity_total),
     })
     return profile
