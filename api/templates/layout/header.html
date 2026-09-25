@@ -119,8 +119,8 @@
                 </div>
 
                 <div class="dropdown dropdown-end">
-                    <button type="button" tabindex="0" class="btn btn-circle btn-ghost bg-primary/10 text-primary">
-                        {{ current_user.nickname | first }}
+                    <button type="button" tabindex="0" class="btn btn-circle btn-ghost overflow-hidden bg-primary/10 text-primary" data-profile-avatar-button aria-label="{{ current_user.nickname }} 프로필 메뉴">
+                        {% if current_user.avatar_url %}<img src="{{ current_user.avatar_url }}" alt="" class="size-full rounded-full object-cover">{% else %}{{ current_user.nickname | first }}{% endif %}
                     </button>
                     <ul tabindex="-1" class="menu dropdown-content z-50 mt-3 w-52 rounded-box border border-base-200 bg-base-100 p-2 shadow">
                         <li><a href="/users/{{ current_user.user_uid }}">프로필</a></li>
@@ -129,7 +129,7 @@
                         {% if current_user.role == 'admin' %}
                         <li><a href="{{ url_for('admin.dashboard') }}" class="font-medium text-primary">관리자 페이지</a></li>
                         {% endif %}
-                        <li><a href="#">설정</a></li>
+                        <li><a href="{{ url_for('home.profile_settings') }}">프로필 설정</a></li>
                         <li class="my-1 border-t border-base-200"></li>
                         <li>
                             <button id="logout-button" type="submit" form="logout-form">로그아웃</button>

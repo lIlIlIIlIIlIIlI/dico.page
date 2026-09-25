@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import binascii
 import html
 import math
 import re
@@ -6,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 try:
     import bleach
@@ -16,7 +19,7 @@ except ImportError:
 
 from quart import Blueprint, abort, current_app, jsonify, redirect, render_template, request, session, url_for
 
-from .module.auth import ensure_database, login_required, validate_csrf_token
+from .module.auth import NICKNAME_PATTERN, ensure_database, login_required, validate_csrf_token
 from .module.notifications import create_notification, get_notices_sync
 from ..module.database import collection, next_id_sync, utc_now
 
@@ -28,6 +31,66 @@ POST_CATEGORIES = {
     "question": "질문",
     "info": "정보",
 }
+MAX_AVATAR_BYTES = 512 * 1024
+
+
+def _validate_avatar_data(value):
+    if len(value) > 700_000:
+        raise ValueError("프로필 이미지는 512KB 이하로 저장할 수 있습니다.")
+    match = re.fullmatch(r"data:image/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})", value)
+    if not match:
+        raise ValueError("PNG, JPG, WebP, GIF 이미지만 사용할 수 있습니다.")
+    try:
+        data = base64.b64decode(match.group(2), validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("이미지 데이터를 읽을 수 없습니다.") from None
+    if not data or len(data) > MAX_AVATAR_BYTES:
+        raise ValueError("프로필 이미지는 512KB 이하로 저장할 수 있습니다.")
+    image_type = match.group(1)
+    valid = {
+        "png": data.startswith(b"\x89PNG\r\n\x1a\n"),
+        "jpeg": data.startswith(b"\xff\xd8\xff"),
+        "webp": data.startswith(b"RIFF") and data[8:12] == b"WEBP",
+        "gif": data.startswith((b"GIF87a", b"GIF89a")),
+    }
+    if not valid[image_type]:
+        raise ValueError("이미지 형식과 내용이 일치하지 않습니다.")
+    return value
+
+
+def _get_profile_settings_sync(user_id):
+    user = collection("users").find_one(
+        {"id": int(user_id)}, {"_id": 0, "id": 1, "user_uid": 1, "nickname": 1}
+    )
+    if not user:
+        return None
+    saved = collection("user_profiles").find_one({"user_id": int(user_id)}, {"_id": 0}) or {}
+    return {
+        **user,
+        "headline": saved.get("headline", "") or "",
+        "bio": saved.get("bio", "") or "",
+        "avatar_url": saved.get("avatar_url", "") or "",
+    }
+
+
+def _save_profile_settings_sync(user_id, nickname, headline, bio, avatar_action, avatar_data):
+    user_id = int(user_id)
+    old_user = collection("users").find_one({"id": user_id}, {"_id": 0, "nickname": 1})
+    if not old_user:
+        return False
+    if nickname != old_user["nickname"]:
+        collection("users").update_one({"id": user_id}, {"$set": {"nickname": nickname}})
+        collection("posts").update_many({"author_id": user_id}, {"$set": {"author_nickname": nickname}})
+        collection("comments").update_many({"author_id": user_id}, {"$set": {"author_nickname": nickname}})
+    changes = {"headline": headline, "bio": bio, "updated_at": utc_now()}
+    if avatar_action == "replace":
+        changes["avatar_url"] = avatar_data
+    elif avatar_action == "remove":
+        changes["avatar_url"] = ""
+    collection("user_profiles").update_one(
+        {"user_id": user_id}, {"$set": changes}, upsert=True
+    )
+    return True
 
 
 def _profile_activity_grid(events, today=None):
@@ -134,6 +197,7 @@ def _get_profile_sync(user_uid):
     profile = dict(user)
     profile.update({
         "avatar_url": profile_document.get("avatar_url", "") or "",
+        "headline": profile_document.get("headline", "") or "",
         "bio": profile_document.get("bio", "") or "",
         "posts": posts,
         "comments": comments,
@@ -668,6 +732,64 @@ async def my_profile():
     if not user_uid:
         abort(404)
     return redirect(url_for("home.user_profile", user_uid=user_uid))
+
+
+@home_bp.route("/settings/profile", methods=["GET", "POST"])
+@login_required
+async def profile_settings():
+    await ensure_database()
+    user_id = session["user_id"]
+    settings = await asyncio.to_thread(_get_profile_settings_sync, user_id)
+    if not settings:
+        abort(404)
+    if request.method == "GET":
+        return await render_template(
+            "settings/profile.html", profile_settings=settings, saved=request.args.get("saved") == "1"
+        )
+
+    form = await request.form
+    if not validate_csrf_token(form):
+        abort(400)
+    nickname = form.get("nickname", "").strip()
+    headline = form.get("headline", "").strip()
+    bio = form.get("bio", "").strip()
+    avatar_action = form.get("avatar_action", "keep")
+    avatar_data = form.get("avatar_data", "")
+    error = None
+    if not NICKNAME_PATTERN.fullmatch(nickname):
+        error = "닉네임은 한글, 영문, 숫자, 밑줄로 2~20자까지 사용할 수 있습니다."
+    elif len(headline) > 80 or len(bio) > 500:
+        error = "한 줄 소개는 80자, 자기소개는 500자 이하로 입력해 주세요."
+    elif avatar_action not in {"keep", "replace", "remove"}:
+        error = "이미지 변경 요청이 올바르지 않습니다."
+    elif avatar_action == "replace":
+        try:
+            avatar_data = _validate_avatar_data(avatar_data)
+        except ValueError as exc:
+            error = str(exc)
+
+    if not error:
+        try:
+            saved = await asyncio.to_thread(
+                _save_profile_settings_sync, user_id, nickname, headline, bio, avatar_action, avatar_data
+            )
+        except DuplicateKeyError:
+            error = "이미 사용 중인 닉네임입니다."
+        else:
+            if not saved:
+                abort(404)
+
+    is_async = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    if error:
+        if is_async:
+            return jsonify({"ok": False, "error": error}), 400
+        settings.update({"nickname": nickname, "headline": headline, "bio": bio})
+        return await render_template("settings/profile.html", profile_settings=settings, error=error), 400
+
+    session["nickname"] = nickname
+    if is_async:
+        return jsonify({"ok": True, "nickname": nickname, "avatar_changed": avatar_action != "keep"})
+    return redirect(url_for("home.profile_settings", saved="1"))
 
 
 @home_bp.route("/write", methods=["GET", "POST"])
