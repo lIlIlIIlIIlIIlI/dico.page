@@ -115,13 +115,22 @@ def _get_profile_sync(user_uid):
     activity_months = []
     last_month = None
     for week_index, week in enumerate(activity_weeks):
-        for cell in week:
+        for day_index, cell in enumerate(week):
             if cell["outside"]:
                 continue
             month = cell["date"][:7]
             if month != last_month:
-                activity_months.append({"label": f"{int(month[5:]):02d}월", "week": week_index})
+                activity_months.append({
+                    "label": f"{month[:4]}년 {int(month[5:])}월",
+                    "weeks": [],
+                    "total": 0,
+                })
                 last_month = month
+            month_data = activity_months[-1]
+            if not month_data["weeks"] or month_data["weeks"][-1]["index"] != week_index:
+                month_data["weeks"].append({"index": week_index, "days": [None] * 7})
+            month_data["weeks"][-1]["days"][day_index] = cell
+            month_data["total"] += cell["count"]
     profile = dict(user)
     profile.update({
         "avatar_url": profile_document.get("avatar_url", "") or "",
