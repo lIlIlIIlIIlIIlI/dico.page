@@ -1,14 +1,11 @@
-{% if images %}
-<section class="mt-8 border-t border-base-200 pt-6" aria-label="사진과 영상">
-    <h2 class="mb-5 text-base font-semibold">사진·영상 {{ images | length }}개</h2>
+{% set photos = images | rejectattr('kind', 'equalto', 'video') | list %}
+{% if photos %}
+<section class="mt-8 border-t border-base-200 pt-6" aria-label="첨부 사진">
+    <h2 class="mb-5 text-base font-semibold">사진 {{ photos | length }}개</h2>
     <div class="space-y-7">
-        {% for image in images %}
-        <figure data-dico-gallery class="min-w-0 overflow-hidden rounded-xl border border-base-200 bg-base-200/30">
-            {% if image.kind == 'video' %}
-            <video src="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=image.id) }}" controls preload="metadata" playsinline data-dico-player class="aspect-video w-full bg-black object-contain"></video>
-            {% else %}
+        {% for image in photos %}
+        <figure class="min-w-0 overflow-hidden rounded-xl border border-base-200 bg-base-200/30">
             <img src="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=image.id) if image.id else image.data }}" alt="{{ image.name }}" loading="lazy" class="max-h-[840px] w-full object-contain">
-            {% endif %}
             <figcaption class="flex min-w-0 items-center justify-between gap-3 px-4 py-3 text-sm text-base-content/70">
                 <span class="min-w-0 truncate" title="{{ image.name }}">{{ image.name }}</span>
                 {% if image.id %}<a data-dico-download class="shrink-0 font-medium text-primary hover:underline" href="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=image.id, download=1) }}" download="{{ image.name }}">다운로드</a>{% endif %}
