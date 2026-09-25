@@ -1,6 +1,6 @@
 window.DicoFileAttachments = window.DicoFileAttachments || (() => {
     const chunkSize = 768 * 1024;
-    const maxSize = 20 * 1024 * 1024;
+    const maxSize = 100 * 1024 * 1024;
     const extensions = new Set(['pdf', 'zip', 'txt', 'csv', 'hwp', 'hwpx', 'docx', 'xlsx', 'pptx']);
 
     function mount(form) {
@@ -32,6 +32,9 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
                 label.className = 'min-w-0 flex-1 truncate text-sm';
                 label.textContent = entry.name;
                 label.title = entry.name;
+                const state = document.createElement('span');
+                state.className = 'shrink-0 text-xs text-base-content/55';
+                state.textContent = entry.uploaded ? '업로드 완료' : entry.failed ? '업로드 실패' : entry.progress || '준비 중';
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.className = 'btn btn-ghost btn-xs shrink-0 text-error';
@@ -42,7 +45,7 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
                     files.splice(index, 1);
                     render();
                 });
-                item.append(icon, label, remove);
+                item.append(icon, label, state, remove);
                 list.appendChild(item);
             });
         }
@@ -54,10 +57,10 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
                 const name = file.name.trim();
                 const extension = name.split('.').pop().toLowerCase();
                 if (!extensions.has(extension) || name.length > 120 || !file.size || file.size > maxSize) {
-                    announce(name + ': 지원하지 않는 형식이거나 20MB를 초과했습니다.', true);
+                    announce(name + ': 지원하지 않는 형식이거나 100MB를 초과했습니다.', true);
                     continue;
                 }
-                files.push({id: crypto.randomUUID(), file, name, nextChunk: 0, uploaded: false});
+                files.push({id: crypto.randomUUID(), file, name, completedChunks: new Set(), uploaded: false});
                 render();
                 announce(files.length + '개 파일이 준비되었습니다.');
             }
@@ -67,21 +70,33 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
             locked = true;
             picker.disabled = true;
             render();
-            for (const entry of files) {
-                if (entry.uploaded) continue;
+            await window.DicoUploadQueue.run(files.filter(entry => !entry.uploaded), 2, async entry => {
                 const base = '/api/media/' + kind + '/' + id + '/files/' + entry.id;
                 const total = Math.ceil(entry.file.size / chunkSize);
                 const args = '?name=' + encodeURIComponent(entry.name) + '&mime=application%2Foctet-stream'
                     + '&size=' + entry.file.size + '&count=' + total;
-                for (let index = entry.nextChunk; index < total; index++) {
-                    announce(entry.name + ' 업로드 중… ' + (index + 1) + '/' + total);
+                entry.failed = false;
+                const uploadChunk = async index => {
                     await send(base + '/chunks/' + index + args,
                         entry.file.slice(index * chunkSize, Math.min(entry.file.size, (index + 1) * chunkSize)), csrfToken);
-                    entry.nextChunk = index + 1;
+                    entry.completedChunks.add(index);
+                    entry.progress = '업로드 중 ' + entry.completedChunks.size + '/' + total;
+                    render();
+                };
+                try {
+                    if (!entry.completedChunks.has(0)) await uploadChunk(0);
+                    const remaining = Array.from({length: total - 1}, (_, index) => index + 1)
+                        .filter(index => !entry.completedChunks.has(index));
+                    await window.DicoUploadQueue.run(remaining, 3, uploadChunk);
+                    await send(base + '/complete', '{}', csrfToken, 'application/json');
+                    entry.uploaded = true;
+                    render();
+                } catch (error) {
+                    entry.failed = true;
+                    render();
+                    throw error;
                 }
-                await send(base + '/complete', '{}', csrfToken, 'application/json');
-                entry.uploaded = true;
-            }
+            });
             announce('일반 첨부파일을 저장했습니다.');
         }
 

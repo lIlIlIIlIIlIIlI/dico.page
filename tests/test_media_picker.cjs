@@ -30,7 +30,7 @@ Object.defineProperty(picker, 'value', {
 
 const requests = [];
 const sandbox = {
-    window: {}, document: {createElement: element}, crypto: webcrypto,
+    window: {}, document: {createElement: element}, crypto: webcrypto, AbortController,
     URL: {createObjectURL: () => 'blob:preview', revokeObjectURL() {}},
     fetch: async url => {
         requests.push(url);
@@ -39,6 +39,7 @@ const sandbox = {
     },
     Event: class {constructor(type) { this.type = type; }},
 };
+vm.runInNewContext(fs.readFileSync('api/static/js/media-upload-queue.js', 'utf8'), sandbox);
 vm.runInNewContext(fs.readFileSync('api/static/js/image-attachments.js', 'utf8'), sandbox);
 
 const uploader = sandbox.window.DicoImageAttachments.mount({

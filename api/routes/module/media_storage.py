@@ -19,7 +19,7 @@ from .auth import ensure_database, get_current_user, validate_csrf_token
 media_bp = Blueprint("media", __name__)
 REPOSITORY = "dico-page/postimage"
 CHUNK_BYTES = 768 * 1024
-MAX_VIDEO_BYTES = 20 * 1024 * 1024
+MAX_VIDEO_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENTS = 5
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 VIDEO_TYPES = {"video/mp4": "mp4", "video/webm": "webm", "video/ogg": "ogv"}

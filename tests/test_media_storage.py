@@ -6,6 +6,32 @@ from api.routes.module import media_storage as media
 
 
 class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_video_allows_100_mib_but_rejects_larger_uploads(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+
+        async def writable(kind, item_id):
+            return {"images": []}, None
+
+        class Uploads:
+            def find_one(self, query):
+                return None
+
+            def update_one(self, query, update, upsert=False):
+                return None
+
+        client = app.test_client()
+        async with client.session_transaction() as session:
+            session["user_id"] = 1
+        base = "/api/media/posts/9/videos/" + media_id + "/chunks/0?name=test.mp4&mime=video%2Fmp4&size="
+        signature = b"\0\0\0\x18ftyp" + b"\0" * (media.CHUNK_BYTES - 8)
+        with patch.object(media, "_write_target", writable), patch.object(media, "collection", return_value=Uploads()), patch.object(media, "_blob", return_value="a" * 40):
+            valid = await client.post(base + str(100 * 1024 * 1024) + "&count=134", data=signature,
+                                      headers={"Content-Type": "video/mp4"})
+            self.assertEqual(valid.status_code, 200)
+            too_large = await client.post(base + str(100 * 1024 * 1024 + 1) + "&count=134", data=signature,
+                                          headers={"Content-Type": "video/mp4"})
+            self.assertEqual(too_large.status_code, 400)
+
     async def test_file_upload_commits_into_separate_attachment_folder(self):
         media_id = "11111111-1111-4111-8111-111111111111"
         payload = b"%PDF-sample"
