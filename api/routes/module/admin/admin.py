@@ -18,6 +18,7 @@ from ..notifications import (
     delete_notice_sync,
     get_notices_sync,
 )
+from ..image_attachments import validate_image_attachments
 
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -187,6 +188,11 @@ async def create_notice():
     is_pinned = form.get("is_pinned") == "on"
     send_notification = form.get("send_notification") == "on"
 
+    try:
+        images = validate_image_attachments(form.get("image_attachments", "[]"))
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+
     if not title or len(title) > 100:
         return jsonify({
             "success": False,
@@ -206,6 +212,7 @@ async def create_notice():
         is_pinned,
         session["user_id"],
         session["nickname"],
+        images,
     )
 
     delivered_count = 0
@@ -228,11 +235,12 @@ async def create_notice():
             ))
             delivered_count += sum(result is not None for result in results)
 
-    await publish_admin_event("notice-created", {"notice": notice})
+    notice_summary = {key: value for key, value in notice.items() if key != "images"}
+    await publish_admin_event("notice-created", {"notice": notice_summary})
     return jsonify({
         "success": True,
         "message": "공지를 작성했습니다.",
-        "notice": notice,
+        "notice": notice_summary,
         "delivered_count": delivered_count,
     })
 

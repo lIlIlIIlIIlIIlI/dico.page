@@ -47,6 +47,7 @@
                             <button type="button" class="btn btn-ghost btn-xs" data-markdown="list">목록</button>
                             <button type="button" class="btn btn-ghost btn-xs" data-markdown="link">링크</button>
                             <button type="button" class="btn btn-ghost btn-xs font-mono" data-markdown="code">코드</button>
+                            <button type="button" class="btn btn-ghost btn-xs" data-image-open>이미지</button>
                         </div>
 
                         <textarea id="notice-content" name="content" maxlength="5000" required class="textarea textarea-bordered min-h-56 w-full resize-y rounded-t-none leading-6" placeholder="공지 내용을 입력해 주세요.&#10;&#10;YouTube·플레이리스트·쇼츠 또는 MP4 주소를 한 줄로 붙여 넣으면 자동으로 표시됩니다."></textarea>
@@ -57,6 +58,8 @@
                             <span><span id="notice-content-count">0</span>/5,000</span>
                         </div>
                     </div>
+
+                    {% include "layout/image_attachments.html" %}
 
                     <div class="flex flex-col gap-3 rounded-xl bg-base-200/60 p-4 sm:flex-row sm:items-center sm:justify-between">
                         <div class="space-y-2">
@@ -124,6 +127,7 @@
 <script>
 (() => {
     const form = document.getElementById('notice-form');
+    const imageAttachments = window.DicoImageAttachments.mount(form);
     const titleInput = document.getElementById('notice-title');
     const contentInput = document.getElementById('notice-content');
     const titleCount = document.getElementById('notice-title-count');
@@ -441,6 +445,7 @@
         submitButton.classList.add('loading');
 
         try {
+            await imageAttachments.ready();
             const response = await fetch(form.action, {
                 method: 'POST',
                 body: new FormData(form),
@@ -454,6 +459,7 @@
 
             insertNotice(data.notice);
             form.reset();
+            imageAttachments.clear();
             form.querySelector('[name="send_notification"]').checked = true;
             setPreviewMode(false);
             updateCounters();
