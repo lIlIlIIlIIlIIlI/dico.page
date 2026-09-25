@@ -378,6 +378,7 @@
             const info = media[Number(placeholder.dataset.dicoMediaIndex)];
             if (info) placeholder.replaceWith(createMediaElement(info));
         });
+        window.DicoPlyr?.apply();
 
         if (!preview.innerHTML.trim()) {
             preview.innerHTML = '<p class="text-base-content/45">미리볼 내용이 없습니다.</p>';
@@ -415,6 +416,7 @@
                     heading.replaceWith(createMediaElement({type: 'attachment', src: attached.previewUrl, name: attached.name}));
                 }
             }
+            window.DicoPlyr?.apply();
         } catch (error) {
             if (error.name === 'AbortError') return;
             preview.textContent = error.message || '미리보기를 불러오지 못했습니다.';
