@@ -15,4 +15,6 @@ Images are at most 768 KiB after optional browser resizing. Videos and general a
 
 Images and videos start uploading as soon as they are selected, using a temporary post or notice ID. Publishing reuses that ID and its uploaded media. Removing an item or canceling the draft deletes its file paths from the repository's current branch and its temporary database state; expired drafts are cleaned when another draft is started. Git commits still retain previously committed media in history, so canceling does not erase historical blobs from GitHub.
 
+Selecting a video inserts `#[filename.mp4]` on its own line at the editor cursor. Moving that line moves the Plyr player in the published post or notice; the preview shows the selected local video there. Videos without a matching marker keep the existing top placement. The separate general attachment list still appears below the content. The file picker copies its selected files before resetting the input, so asynchronous uploads retain the selection.
+
 Git history retains uploaded files even after a notice is deleted. Monitor storage growth and GitHub API usage; use object storage for higher traffic or larger videos.

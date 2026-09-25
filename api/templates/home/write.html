@@ -63,7 +63,7 @@
     const form = document.getElementById('post-write-form');
     if (!form) return;
     const draft = window.DicoMediaDraft.mount(form, 'posts');
-    const imageAttachments = window.DicoImageAttachments.mount(form, {kind: 'posts', ensureDraft: draft.ensureDraft});
+    const imageAttachments = window.DicoImageAttachments.mount(form, {kind: 'posts', ensureDraft: draft.ensureDraft, contentInput: form.querySelector('[name="content"]')});
     draft.setWaitForUploads(imageAttachments.ready);
     const fileAttachments = window.DicoFileAttachments.mount(form);
 
@@ -132,6 +132,21 @@
         const wrapper = document.createElement('div');
         wrapper.className = 'dico-media';
 
+        if (info.type === 'attachment') {
+            wrapper.classList.add('dico-media-attachment');
+            const video = document.createElement('video');
+            video.className = 'dico-media-frame';
+            video.src = info.src;
+            video.controls = true;
+            video.preload = 'metadata';
+            video.playsInline = true;
+            const caption = document.createElement('div');
+            caption.className = 'dico-media-caption';
+            caption.textContent = info.name;
+            wrapper.append(video, caption);
+            return wrapper;
+        }
+
         if (info.type === 'youtube') {
             const iframe = document.createElement('iframe');
             iframe.className = 'dico-media-frame';
@@ -191,7 +206,10 @@
             let candidate = line.trim();
             if (candidate.startsWith('<') && candidate.endsWith('>')) candidate = candidate.slice(1, -1);
 
-            const info = getMediaInfo(candidate);
+            const attached = !openedFence && imageAttachments.videoForToken(candidate);
+            const info = attached
+                ? {type: 'attachment', src: attached.previewUrl, name: attached.name}
+                : getMediaInfo(candidate);
             if (!info || openedFence) return [line];
 
             const index = media.push(info) - 1;
@@ -241,6 +259,12 @@
             }
 
             preview.innerHTML = data.html || '<p class="text-base-content/45">미리볼 내용이 없습니다.</p>';
+            for (const heading of preview.querySelectorAll('h1')) {
+                const attached = imageAttachments.videoForToken('#' + heading.textContent.trim());
+                if (attached && contentInput.value.split(/\r?\n/).some(line => line.trim() === '#[' + attached.name + ']')) {
+                    heading.replaceWith(createMediaElement({type: 'attachment', src: attached.previewUrl, name: attached.name}));
+                }
+            }
         } catch (error) {
             if (error.name === 'AbortError') return;
             preview.textContent = error.message || '미리보기를 불러오지 못했습니다.';

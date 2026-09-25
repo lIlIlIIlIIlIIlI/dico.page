@@ -31,6 +31,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
         const count = root.querySelector('[data-image-count]');
         const status = root.querySelector('[data-image-status]');
         const menu = root.querySelector('[data-image-menu]');
+        const contentInput = options.contentInput;
         let files = [];
         let pending = Promise.resolve();
         let locked = false;
@@ -42,12 +43,40 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
             status.classList.toggle('text-error', error);
         }
 
+        function changed() {
+            contentInput?.dispatchEvent(new Event('input', {bubbles: true}));
+        }
+
+        function videoForToken(line) {
+            return files.find(entry => !entry.removed && videoTypes.has(entry.file.type)
+                && line.trim() === '#[' + entry.name + ']');
+        }
+
+        function insertVideo(entry) {
+            if (!contentInput) return;
+            const marker = '#[' + entry.name + ']';
+            const start = contentInput.selectionStart;
+            const end = contentInput.selectionEnd;
+            const before = contentInput.value.slice(0, start);
+            const after = contentInput.value.slice(end);
+            const insert = (before && !before.endsWith('\n\n') ? before.endsWith('\n') ? '\n' : '\n\n' : '')
+                + marker + (after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n');
+            if (contentInput.value.length - (end - start) + insert.length > contentInput.maxLength) {
+                announce('본문 글자 수 제한을 초과했습니다.', true);
+                return;
+            }
+            contentInput.setRangeText(insert, start, end, 'end');
+            changed();
+            contentInput.focus();
+            announce(entry.name + ' 영상 위치를 본문에 표시했습니다. 원하는 줄로 옮길 수 있습니다.');
+        }
+
         function render() {
             count.textContent = files.length + '/5';
             list.replaceChildren();
-            files.forEach((entry, index) => {
+            files.forEach((entry) => {
                 const item = document.createElement('li');
-                item.className = 'flex min-w-0 items-center gap-3 rounded-lg border border-base-200 bg-base-200/30 p-2';
+                item.className = 'flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-base-200 bg-base-200/30 p-2 sm:flex-nowrap';
                 if (imageTypes.has(entry.file.type)) {
                     const thumb = document.createElement('img');
                     thumb.src = entry.previewUrl;
@@ -83,7 +112,14 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         }
                         URL.revokeObjectURL(entry.previewUrl);
                         files = files.filter(item => item !== entry);
+                        if (contentInput && videoTypes.has(entry.file.type)
+                            && !files.some(item => item.name === entry.name && videoTypes.has(item.file.type))) {
+                            const marker = '#[' + entry.name + ']';
+                            contentInput.value = contentInput.value.split('\n')
+                                .filter(line => line.trim() !== marker).join('\n');
+                        }
                         render();
+                        changed();
                         announce(entry.name + ' 파일을 삭제했습니다.');
                     }).catch(error => {
                         entry.removed = false;
@@ -91,8 +127,38 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         announce(error.message, true);
                     });
                 });
-                item.append(label, state, remove);
+                item.append(label, state);
+                if (videoTypes.has(entry.file.type) && contentInput) {
+                    const insert = document.createElement('button');
+                    insert.type = 'button';
+                    insert.className = 'btn btn-ghost btn-xs shrink-0 text-primary';
+                    insert.textContent = '본문에 삽입';
+                    insert.disabled = locked || entry.removed;
+                    insert.addEventListener('click', () => insertVideo(entry));
+                    item.appendChild(insert);
+                }
+                const view = document.createElement('button');
+                view.type = 'button';
+                view.className = 'btn btn-ghost btn-xs shrink-0';
+                view.textContent = entry.expanded ? '닫기' : '미리보기';
+                view.addEventListener('click', () => { entry.expanded = !entry.expanded; render(); });
+                item.append(view, remove);
                 list.appendChild(item);
+                if (entry.expanded) {
+                    const frame = document.createElement('li');
+                    frame.className = 'overflow-hidden rounded-lg border border-base-200 bg-base-100 p-2';
+                    const media = document.createElement(videoTypes.has(entry.file.type) ? 'video' : 'img');
+                    media.src = entry.previewUrl;
+                    media.className = 'max-h-96 w-full rounded object-contain';
+                    if (media.tagName === 'VIDEO') {
+                        media.controls = true;
+                        media.preload = 'metadata';
+                        media.playsInline = true;
+                        media.setAttribute('data-dico-player', '');
+                    } else media.alt = entry.name;
+                    frame.appendChild(media);
+                    list.appendChild(frame);
+                }
             });
         }
 
@@ -139,6 +205,8 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         });
                         const entry = files[files.length - 1];
                         render();
+                        if (videoTypes.has(file.type)) insertVideo(entry);
+                        else changed();
                         if (options.ensureDraft) {
                             try {
                                 await preflight();
@@ -233,8 +301,9 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
             announce('복사한 이미지를 Ctrl+V로 붙여넣어 주세요.');
         });
         picker.addEventListener('change', () => {
-            addFiles(picker.files);
+            const selected = Array.from(picker.files);
             picker.value = '';
+            addFiles(selected);
         });
         zone.addEventListener('click', () => { if (!locked) picker.click(); });
         form.querySelector('[data-image-open]')?.addEventListener('click', () => {
@@ -269,6 +338,8 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
 
         return {
             ready: () => pending,
+            videoForToken,
+            videos: () => files.filter(entry => !entry.removed && videoTypes.has(entry.file.type)),
             hasFiles: () => files.length > 0,
             preflight,
             uploadAll,

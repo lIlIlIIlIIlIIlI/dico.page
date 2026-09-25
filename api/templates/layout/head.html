@@ -161,6 +161,18 @@
         background: #000;
         object-fit: contain;
     }
+    .dico-media-attachment { background: var(--color-base-100); }
+    .dico-media-caption {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.75rem 1rem;
+        color: var(--color-base-content);
+        font-size: 0.875rem;
+    }
+    .dico-media-caption span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dico-media-caption a { flex-shrink: 0; color: var(--color-primary); }
     .dico-media-instagram-frame {
         width: 100%;
         max-width: 680px;

@@ -246,9 +246,10 @@ async def notice_detail(notice_id):
     if not notice:
         abort(404)
 
-    from ..home import _render_markdown
+    from ..home import _inline_video_ids, _render_markdown
 
-    rendered_content = Markup(_render_markdown(notice["content"]))
+    rendered_content = Markup(_render_markdown(notice["content"], notice.get("images", []), "notices", notice_id))
+    notice["inline_video_ids"] = _inline_video_ids(notice["content"], notice.get("images", []))
     notice["content"] = rendered_content
     notice["content_html"] = rendered_content
     return await render_template(

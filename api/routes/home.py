@@ -486,6 +486,46 @@ def _render_media_block(kind, source):
     )
 
 
+def _video_for_line(line, videos):
+    candidate = line.strip()
+    if not candidate.startswith("#[") or not candidate.endswith("]"):
+        return None
+    return next((video for video in videos if video.get("kind") == "video"
+                 and candidate == "#[" + video.get("name", "") + "]"), None)
+
+
+def _render_inline_video(video, kind, item_id):
+    source = html.escape(url_for("media.serve_media", kind=kind, item_id=item_id, media_id=video["id"]), quote=True)
+    download = html.escape(url_for("media.serve_media", kind=kind, item_id=item_id,
+                                    media_id=video["id"], download=1), quote=True)
+    name = html.escape(video.get("name", "영상"), quote=True)
+    return (
+        '<figure class="dico-media dico-media-attachment">'
+        f'<video class="dico-media-frame" src="{source}" controls preload="metadata" playsinline></video>'
+        '<figcaption class="dico-media-caption">'
+        f'<span>{name}</span><a href="{download}" download="{name}">다운로드</a>'
+        '</figcaption></figure>'
+    )
+
+
+def _inline_video_ids(value, videos):
+    selected = set()
+    fence_marker = None
+    for line in str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if not fence_marker and _single_line_code_fence(line):
+            continue
+        fence = re.match(r"^\s*(```|~~~)", line)
+        if fence:
+            marker = fence.group(1)
+            fence_marker = None if fence_marker == marker else marker
+            continue
+        if not fence_marker:
+            video = _video_for_line(line, videos)
+            if video:
+                selected.add(video["id"])
+    return selected
+
+
 def _single_line_code_fence(line):
     """Discord처럼 ```내용``` 한 줄 표기도 코드 블록으로 인식합니다."""
     match = re.fullmatch(r"\s*(`{3,}|~{3,})(.*?)\1\s*", line)
@@ -511,7 +551,7 @@ def _is_markdown_block_start(line):
     return _standalone_media(line) is not None
 
 
-def _render_markdown_fallback(value):
+def _render_markdown_fallback(value, videos=(), kind=None, item_id=None):
     lines = str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     output = []
     index = 0
@@ -545,6 +585,12 @@ def _render_markdown_fallback(value):
             output.append(
                 f"<pre><code{language_class}>{html.escape(chr(10).join(code_lines))}</code></pre>"
             )
+            continue
+
+        video = _video_for_line(line, videos) if kind and item_id else None
+        if video:
+            output.append(_render_inline_video(video, kind, item_id))
+            index += 1
             continue
 
         media = _standalone_media(line)
@@ -603,7 +649,7 @@ def _render_markdown_fallback(value):
     return "\n".join(output)
 
 
-def _prepare_markdown_media(value):
+def _prepare_markdown_media(value, videos=(), kind=None, item_id=None):
     output = []
     fence_marker = None
 
@@ -621,8 +667,11 @@ def _prepare_markdown_media(value):
             output.append(line)
             continue
 
-        media = None if fence_marker else _standalone_media(line)
-        if media:
+        video = _video_for_line(line, videos) if not fence_marker and kind and item_id else None
+        media = None if fence_marker or video else _standalone_media(line)
+        if video:
+            output.extend(("", _render_inline_video(video, kind, item_id), ""))
+        elif media:
             output.extend(("", _render_media_block(*media), ""))
         else:
             output.append(line)
@@ -647,12 +696,12 @@ def _normalize_code_entities(value):
     return code_pattern.sub(normalize, value)
 
 
-def _render_markdown(value):
+def _render_markdown(value, videos=(), kind=None, item_id=None):
     if markdown_module is None or bleach is None:
-        return _render_markdown_fallback(value)
+        return _render_markdown_fallback(value, videos, kind, item_id)
 
     rendered = markdown_module.markdown(
-        _prepare_markdown_media(value),
+        _prepare_markdown_media(value, videos, kind, item_id),
         extensions=("extra", "sane_lists", "nl2br"),
         output_format="html5",
     )
@@ -661,13 +710,15 @@ def _render_markdown(value):
         "p", "br", "h1", "h2", "h3", "h4", "h5", "h6", "hr",
         "pre", "code", "blockquote", "ul", "ol", "li", "del",
         "img", "table", "thead", "tbody", "tr", "th", "td",
-        "div", "iframe", "video",
+        "div", "iframe", "video", "figure", "figcaption", "span",
     })
     allowed_attributes = {
-        "a": ("href", "title", "target", "rel"),
+        "a": ("href", "title", "target", "rel", "download"),
         "img": ("src", "alt", "title", "loading"),
         "code": ("class",),
         "div": ("class",),
+        "figure": ("class",),
+        "figcaption": ("class",),
         "iframe": (
             "class", "src", "title", "loading", "scrolling", "referrerpolicy",
             "allow", "allowfullscreen",
@@ -891,7 +942,8 @@ async def post_detail(post_id):
         abort(404)
 
     post["media_kind"], post["media_src"] = _get_media_info(post.get("media_url"))
-    post["content_html"] = _render_markdown(post["content"])
+    post["content_html"] = _render_markdown(post["content"], post.get("images", []), "posts", post_id)
+    post["inline_video_ids"] = _inline_video_ids(post["content"], post.get("images", []))
     return await render_template(
         "home/detail.html",
         post=post,

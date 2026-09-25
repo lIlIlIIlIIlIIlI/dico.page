@@ -94,7 +94,11 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
         }
 
         root.querySelector('[data-file-select]').addEventListener('click', () => picker.click());
-        picker.addEventListener('change', () => { addFiles(picker.files); picker.value = ''; });
+        picker.addEventListener('change', () => {
+            const selected = Array.from(picker.files);
+            picker.value = '';
+            addFiles(selected);
+        });
         zone.addEventListener('click', () => { if (!locked) picker.click(); });
         zone.addEventListener('keydown', event => {
             if (!locked && (event.key === 'Enter' || event.key === ' ')) {
