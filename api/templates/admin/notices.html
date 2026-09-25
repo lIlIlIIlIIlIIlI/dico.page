@@ -24,6 +24,7 @@
 
                 <form id="notice-form" action="{{ url_for('admin.create_notice') }}" method="post" class="space-y-5 p-5">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="media_draft_id" value="">
 
                     <label class="form-control">
                         <span class="label-text mb-2 font-medium">제목</span>
@@ -74,7 +75,7 @@
                             </label>
                         </div>
 
-                        <button id="notice-submit" type="submit" class="btn btn-primary sm:min-w-28">공지 등록</button>
+                        <div class="flex gap-2"><button id="notice-cancel" type="button" class="btn btn-ghost">작성 취소</button><button id="notice-submit" type="submit" class="btn btn-primary sm:min-w-28">공지 등록</button></div>
                     </div>
                 </form>
             </section>
@@ -128,7 +129,9 @@
 <script>
 (() => {
     const form = document.getElementById('notice-form');
-    const imageAttachments = window.DicoImageAttachments.mount(form);
+    const draft = window.DicoMediaDraft.mount(form, 'notices');
+    const imageAttachments = window.DicoImageAttachments.mount(form, {kind: 'notices', ensureDraft: draft.ensureDraft});
+    draft.setWaitForUploads(imageAttachments.ready);
     const fileAttachments = window.DicoFileAttachments.mount(form);
     const titleInput = document.getElementById('notice-title');
     const contentInput = document.getElementById('notice-content');
@@ -446,12 +449,15 @@
         event.preventDefault();
         submitButton.disabled = true;
         submitButton.classList.add('loading');
+        imageAttachments.freeze();
 
         try {
             await imageAttachments.ready();
             await imageAttachments.preflight();
             await fileAttachments.preflight();
             if (!savedNotice) {
+                if (imageAttachments.hasFiles()) await draft.ensureDraft();
+                if (draft.id()) await imageAttachments.uploadAll('notices', draft.id(), csrfToken);
                 const response = await fetch(form.action, {
                     method: 'POST',
                     body: new FormData(form),
@@ -464,8 +470,8 @@
                 }
 
                 savedNotice = data;
+                draft.complete();
             }
-            await imageAttachments.uploadAll('notices', savedNotice.notice.id, csrfToken);
             await fileAttachments.uploadAll('notices', savedNotice.notice.id, csrfToken);
             insertNotice(savedNotice.notice);
             const deliveryText = savedNotice.delivered_count > 0
@@ -483,8 +489,28 @@
         } catch (error) {
             showMessage(error.message, 'error');
         } finally {
+            if (!savedNotice) imageAttachments.unfreeze();
             submitButton.disabled = false;
             submitButton.classList.remove('loading');
+        }
+    });
+
+    document.getElementById('notice-cancel').addEventListener('click', async () => {
+        if (savedNotice) { showMessage('이미 등록된 공지입니다. 첨부파일 전송을 다시 시도해 주세요.', 'error'); return; }
+        imageAttachments.freeze();
+        try {
+            await imageAttachments.ready();
+            await draft.cancel(true);
+            form.reset();
+            imageAttachments.clear();
+            fileAttachments.clear();
+            form.querySelector('[name="send_notification"]').checked = true;
+            setPreviewMode(false);
+            updateCounters();
+            showMessage('작성을 취소하고 업로드한 미디어를 삭제했습니다.');
+        } catch (error) {
+            imageAttachments.unfreeze();
+            showMessage(error.message || '첨부파일을 삭제하지 못했습니다.', 'error');
         }
     });
 

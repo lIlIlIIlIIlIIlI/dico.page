@@ -15,6 +15,7 @@
 
             <form id="post-write-form" method="post" action="{{ url_for('home.write') }}" class="space-y-5 rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-7">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="media_draft_id" value="">
                 <label class="form-control">
                     <span class="label-text mb-2 font-medium">게시판</span>
                     <select name="category" class="select select-bordered w-full" required>{% for key, label in categories.items() %}<option value="{{ key }}" {% if values.category == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
@@ -49,7 +50,7 @@
                 </div>
                 {% include "layout/image_attachments.html" %}
                 {% include "layout/file_attachments.html" %}
-                <div class="flex justify-end gap-2 border-t border-base-300 pt-5"><a href="{{ url_for('home.index') }}" class="btn btn-ghost">취소</a><button type="submit" class="btn btn-primary">등록</button></div>
+                <div class="flex justify-end gap-2 border-t border-base-300 pt-5"><a href="{{ url_for('home.index') }}" data-post-cancel class="btn btn-ghost">취소</a><button type="submit" class="btn btn-primary">등록</button></div>
             </form>
         </div>
     </div>
@@ -61,7 +62,9 @@
 (() => {
     const form = document.getElementById('post-write-form');
     if (!form) return;
-    const imageAttachments = window.DicoImageAttachments.mount(form);
+    const draft = window.DicoMediaDraft.mount(form, 'posts');
+    const imageAttachments = window.DicoImageAttachments.mount(form, {kind: 'posts', ensureDraft: draft.ensureDraft});
+    draft.setWaitForUploads(imageAttachments.ready);
     const fileAttachments = window.DicoFileAttachments.mount(form);
 
     const contentInput = document.getElementById('post-content');
@@ -298,12 +301,15 @@
         const button = form.querySelector('button[type="submit"]');
         button.disabled = true;
         button.classList.add('loading');
+        imageAttachments.freeze();
 
         try {
             await imageAttachments.ready();
             await imageAttachments.preflight();
             await fileAttachments.preflight();
             if (!savedPost) {
+                if (imageAttachments.hasFiles()) await draft.ensureDraft();
+                if (draft.id()) await imageAttachments.uploadAll('posts', draft.id(), csrfToken);
                 const response = await fetch(form.action, {
                     method: 'POST',
                     body: new FormData(form),
@@ -317,15 +323,31 @@
                 }
 
                 savedPost = data;
+                draft.finish();
             }
-            await imageAttachments.uploadAll('posts', savedPost.post_id, csrfToken);
             await fileAttachments.uploadAll('posts', savedPost.post_id, csrfToken);
             await window.appNavigate(savedPost.redirect);
         } catch (error) {
             window.alert(error.message || '서버와 통신하지 못했습니다.');
         } finally {
+            if (!savedPost) imageAttachments.unfreeze();
             button.disabled = false;
             button.classList.remove('loading');
+        }
+    });
+
+    form.querySelector('[data-post-cancel]').addEventListener('click', async event => {
+        event.preventDefault();
+        imageAttachments.freeze();
+        try {
+            await imageAttachments.ready();
+            await draft.cancel();
+            imageAttachments.clear();
+            fileAttachments.clear();
+            await window.appNavigate(event.currentTarget.href);
+        } catch (error) {
+            imageAttachments.unfreeze();
+            window.alert(error.message || '첨부파일을 삭제하지 못했습니다.');
         }
     });
 })();

@@ -22,7 +22,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
         return data;
     }
 
-    function mount(form) {
+    function mount(form, options = {}) {
         const root = form.querySelector('[data-image-attachments]');
         if (!root) return null;
         const picker = root.querySelector('[data-image-picker]');
@@ -34,6 +34,8 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
         let files = [];
         let pending = Promise.resolve();
         let locked = false;
+        let targetId = null;
+        const csrfToken = form.querySelector('[name="csrf_token"]').value;
 
         function announce(message, error = false) {
             status.textContent = message;
@@ -62,18 +64,34 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                 label.className = 'min-w-0 flex-1 truncate text-sm';
                 label.textContent = entry.name;
                 label.title = entry.name;
+                const state = document.createElement('span');
+                state.className = 'shrink-0 text-xs text-base-content/55';
+                state.textContent = entry.removed ? '삭제 중' : entry.uploaded ? '업로드 완료' : entry.failed ? '업로드 실패' : entry.uploading ? '업로드 중' : '준비 중';
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.className = 'btn btn-ghost btn-xs shrink-0 text-error';
                 remove.textContent = '삭제';
                 remove.disabled = locked;
                 remove.addEventListener('click', () => {
-                    if (locked) return;
-                    URL.revokeObjectURL(entry.previewUrl);
-                    files.splice(index, 1);
+                    if (locked || entry.removed) return;
+                    entry.removed = true;
                     render();
+                    pending = pending.then(async () => {
+                        if (options.kind && targetId) {
+                            await send('/api/media/drafts/' + options.kind + '/' + targetId + '/remove/' + entry.id,
+                                '{}', 'application/json', csrfToken);
+                        }
+                        URL.revokeObjectURL(entry.previewUrl);
+                        files = files.filter(item => item !== entry);
+                        render();
+                        announce(entry.name + ' 파일을 삭제했습니다.');
+                    }).catch(error => {
+                        entry.removed = false;
+                        render();
+                        announce(error.message, true);
+                    });
                 });
-                item.append(label, remove);
+                item.append(label, state, remove);
                 list.appendChild(item);
             });
         }
@@ -116,10 +134,27 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         const name = typeof source.name === 'string' ? source.name.slice(0, 120) : '붙여넣은 이미지';
                         files.push({
                             id: crypto.randomUUID(), name: name || '붙여넣은 이미지',
-                            file, previewUrl: URL.createObjectURL(file), nextChunk: 0, uploaded: false
+                            file, previewUrl: URL.createObjectURL(file), nextChunk: 0, uploaded: false,
+                            failed: false, removed: false, uploading: false
                         });
+                        const entry = files[files.length - 1];
                         render();
-                        announce(files.length + '개 파일이 준비되었습니다.');
+                        if (options.ensureDraft) {
+                            try {
+                                await preflight();
+                                targetId = await options.ensureDraft();
+                                if (!entry.removed) {
+                                    await uploadEntry(entry, options.kind, targetId, csrfToken);
+                                    if (!entry.removed) announce(entry.name + ' 업로드를 완료했습니다.');
+                                }
+                            } catch (error) {
+                                entry.failed = true;
+                                render();
+                                announce(error.message, true);
+                            }
+                        } else {
+                            announce(files.length + '개 파일이 준비되었습니다.');
+                        }
                     } catch (error) { announce(error.message, true); }
                 }
             });
@@ -135,32 +170,44 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
             }
         }
 
-        async function uploadAll(kind, id, csrfToken) {
-            locked = true;
-            picker.disabled = true;
-            render();
+        async function uploadEntry(entry, kind, id, token) {
             const base = '/api/media/' + kind + '/' + id;
-            for (const entry of files) {
-                if (entry.uploaded) continue;
+            entry.uploading = true;
+            entry.failed = false;
+            render();
+            try {
                 const mime = entry.file.type;
                 const name = encodeURIComponent(entry.name);
                 if (imageTypes.has(mime)) {
                     announce(entry.name + ' 업로드 중…');
-                    await send(base + '/images/' + entry.id + '?name=' + name, entry.file, mime, csrfToken);
+                    await send(base + '/images/' + entry.id + '?name=' + name, entry.file, mime, token);
                 } else {
                     const total = Math.ceil(entry.file.size / chunkSize);
                     const args = '?name=' + name + '&mime=' + encodeURIComponent(mime)
                         + '&size=' + entry.file.size + '&count=' + total;
-                    for (let index = entry.nextChunk; index < total; index++) {
+                    for (let index = entry.nextChunk; index < total && !entry.removed; index++) {
                         announce(entry.name + ' 업로드 중… ' + (index + 1) + '/' + total);
                         await send(base + '/videos/' + entry.id + '/chunks/' + index + args,
                             entry.file.slice(index * chunkSize, Math.min(entry.file.size, (index + 1) * chunkSize)),
-                            mime, csrfToken);
+                            mime, token);
                         entry.nextChunk = index + 1;
                     }
-                    await send(base + '/videos/' + entry.id + '/complete', '{}', 'application/json', csrfToken);
+                    if (!entry.removed) await send(base + '/videos/' + entry.id + '/complete', '{}', 'application/json', token);
                 }
-                entry.uploaded = true;
+                if (!entry.removed) entry.uploaded = true;
+            } finally {
+                entry.uploading = false;
+                render();
+            }
+        }
+
+        async function uploadAll(kind, id, token) {
+            locked = true;
+            picker.disabled = true;
+            render();
+            for (const entry of files) {
+                if (entry.uploaded || entry.removed) continue;
+                await uploadEntry(entry, kind, id, token);
             }
             announce('첨부파일을 저장했습니다.');
         }
@@ -222,13 +269,18 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
 
         return {
             ready: () => pending,
+            hasFiles: () => files.length > 0,
             preflight,
             uploadAll,
+            freeze: () => { locked = true; picker.disabled = true; render(); },
+            unfreeze: () => { locked = false; picker.disabled = false; render(); },
             clear: () => {
                 files.forEach(entry => URL.revokeObjectURL(entry.previewUrl));
                 files = [];
                 locked = false;
                 picker.disabled = false;
+                targetId = null;
+                pending = Promise.resolve();
                 render();
                 announce('작성 칸에서 Ctrl+V로 복사한 이미지도 추가할 수 있습니다.');
             }

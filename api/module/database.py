@@ -73,6 +73,7 @@ def ensure_database_sync():
             db.notification_settings.create_index("user_id", unique=True)
             db.notices.create_index([("is_pinned", DESCENDING), ("id", DESCENDING)])
             db.media_uploads.create_index("expire_at", expireAfterSeconds=0)
+            db.media_drafts.create_index("expire_at")
             _indexes_ready = True
     return db
 
