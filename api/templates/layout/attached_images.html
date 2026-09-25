@@ -1,10 +1,14 @@
 {% if images %}
-<section class="mt-6 border-t border-base-200 pt-5" aria-label="첨부 이미지">
-    <h2 class="mb-4 text-sm font-semibold">첨부 이미지 {{ images | length }}개</h2>
+<section class="mt-6 border-t border-base-200 pt-5" aria-label="첨부 미디어">
+    <h2 class="mb-4 text-sm font-semibold">첨부파일 {{ images | length }}개</h2>
     <div class="grid gap-4 sm:grid-cols-2">
         {% for image in images %}
         <figure class="min-w-0 overflow-hidden rounded-xl border border-base-200 bg-base-200/30">
-            <img src="{{ image.data }}" alt="{{ image.name }}" loading="lazy" class="max-h-[520px] w-full object-contain">
+            {% if image.kind == 'video' %}
+            <video src="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=image.id) }}" controls preload="metadata" playsinline class="max-h-[520px] w-full bg-black"></video>
+            {% else %}
+            <img src="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=image.id) if image.id else image.data }}" alt="{{ image.name }}" loading="lazy" class="max-h-[520px] w-full object-contain">
+            {% endif %}
             <figcaption class="truncate px-3 py-2 text-xs text-base-content/60" title="{{ image.name }}">{{ image.name }}</figcaption>
         </figure>
         {% endfor %}

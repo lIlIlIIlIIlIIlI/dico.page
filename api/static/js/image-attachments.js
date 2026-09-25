@@ -1,9 +1,26 @@
 window.DicoImageAttachments = window.DicoImageAttachments || (() => {
-    const maxImages = 5;
-    const maxBytes = 512 * 1024;
-    const maxTotal = 2 * 1024 * 1024;
-    const maxOriginal = 8 * 1024 * 1024;
-    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+    const chunkSize = 768 * 1024;
+    const maxVideo = 20 * 1024 * 1024;
+    const maxOriginalImage = 8 * 1024 * 1024;
+    const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+    const videoTypes = new Set(['video/mp4', 'video/webm', 'video/ogg']);
+
+    async function send(url, body, mime, csrfToken) {
+        const response = await fetch(url, {
+            method: 'POST',
+            body,
+            credentials: 'same-origin',
+            headers: {'Content-Type': mime, 'X-CSRF-Token': csrfToken, 'Accept': 'application/json'}
+        });
+        let data;
+        try { data = await response.json(); } catch (_) { data = {}; }
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || (response.status === 413
+                ? '파일 크기가 서버 제한을 초과했습니다.'
+                : '파일을 저장하지 못했습니다. 다시 시도해 주세요.'));
+        }
+        return data;
+    }
 
     function mount(form) {
         const root = form.querySelector('[data-image-attachments]');
@@ -11,12 +28,12 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
         const picker = root.querySelector('[data-image-picker]');
         const zone = root.querySelector('[data-image-dropzone]');
         const list = root.querySelector('[data-image-list]');
-        const input = root.querySelector('[data-image-value]');
         const count = root.querySelector('[data-image-count]');
         const status = root.querySelector('[data-image-status]');
         const menu = root.querySelector('[data-image-menu]');
-        let images = [];
+        let files = [];
         let pending = Promise.resolve();
+        let locked = false;
 
         function announce(message, error = false) {
             status.textContent = message;
@@ -24,95 +41,128 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
         }
 
         function render() {
-            input.value = JSON.stringify(images.map(({name, data}) => ({name, data})));
-            count.textContent = `${images.length}/${maxImages}`;
+            count.textContent = files.length + '/5';
             list.replaceChildren();
-            images.forEach((image, index) => {
+            files.forEach((entry, index) => {
                 const item = document.createElement('li');
                 item.className = 'flex min-w-0 items-center gap-3 rounded-lg border border-base-200 bg-base-200/30 p-2';
-                const thumb = document.createElement('img');
-                thumb.src = image.data;
-                thumb.alt = '';
-                thumb.className = 'size-10 shrink-0 rounded object-cover';
-                const name = document.createElement('span');
-                name.className = 'min-w-0 flex-1 truncate text-sm';
-                name.title = image.name;
-                name.textContent = image.name;
+                if (imageTypes.has(entry.file.type)) {
+                    const thumb = document.createElement('img');
+                    thumb.src = entry.previewUrl;
+                    thumb.alt = '';
+                    thumb.className = 'size-10 shrink-0 rounded object-cover';
+                    item.appendChild(thumb);
+                } else {
+                    const icon = document.createElement('span');
+                    icon.className = 'flex size-10 shrink-0 items-center justify-center rounded bg-primary/10 text-primary';
+                    icon.textContent = '▶';
+                    item.appendChild(icon);
+                }
+                const label = document.createElement('span');
+                label.className = 'min-w-0 flex-1 truncate text-sm';
+                label.textContent = entry.name;
+                label.title = entry.name;
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.className = 'btn btn-ghost btn-xs shrink-0 text-error';
                 remove.textContent = '삭제';
-                remove.setAttribute('aria-label', `${image.name} 삭제`);
+                remove.disabled = locked;
                 remove.addEventListener('click', () => {
-                    images.splice(index, 1);
+                    if (locked) return;
+                    URL.revokeObjectURL(entry.previewUrl);
+                    files.splice(index, 1);
                     render();
-                    announce('이미지를 목록에서 삭제했습니다.');
                 });
-                item.append(thumb, name, remove);
-                list.append(item);
+                item.append(label, remove);
+                list.appendChild(item);
             });
         }
 
-        function readFile(file) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = () => reject(new Error('이미지를 읽지 못했습니다.'));
-                reader.readAsDataURL(file);
-            });
-        }
-
-        async function prepareFile(file) {
-            if (!file.size || file.size > maxOriginal) throw new Error(`${file.name}: 원본 이미지는 8MB 이하로 선택해 주세요.`);
-            if (file.size <= maxBytes) return {data: await readFile(file), size: file.size};
-            if (file.type === 'image/gif') throw new Error(`${file.name}: 움직이는 GIF를 유지하려면 512KB 이하로 선택해 주세요.`);
-            if (!window.createImageBitmap) throw new Error(`${file.name}: 이미지를 512KB 이하로 줄여서 선택해 주세요.`);
+        async function prepare(file) {
+            if (videoTypes.has(file.type)) {
+                if (!file.size || file.size > maxVideo) throw new Error((file.name || '이미지') + ': 영상은 20MB 이하로 올려 주세요.');
+                return file;
+            }
+            if (!imageTypes.has(file.type)) throw new Error((file.name || '이미지') + ': PNG, JPG, WebP, GIF 또는 MP4, WebM, OGG만 지원합니다.');
+            if (!file.size || file.size > maxOriginalImage) throw new Error((file.name || '이미지') + ': 원본 이미지는 8MB 이하로 선택해 주세요.');
+            if (file.size <= chunkSize) return file;
+            if (file.type === 'image/gif') throw new Error((file.name || '이미지') + ': 움직이는 GIF는 768KB 이하로 선택해 주세요.');
+            if (!window.createImageBitmap) throw new Error((file.name || '이미지') + ': 이미지를 768KB 이하로 줄여서 선택해 주세요.');
             const bitmap = await createImageBitmap(file);
             const canvas = document.createElement('canvas');
             let scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
             try {
-                for (let attempt = 0; attempt < 5; attempt++) {
+                for (let attempt = 0; attempt < 6; attempt++) {
                     canvas.width = Math.max(1, Math.round(bitmap.width * scale));
                     canvas.height = Math.max(1, Math.round(bitmap.height * scale));
                     canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-                    let data = canvas.toDataURL('image/webp', 0.82);
-                    if (!data.startsWith('data:image/webp;base64,')) data = canvas.toDataURL('image/jpeg', 0.78);
-                    const size = Math.floor((data.split(',')[1].length * 3) / 4);
-                    if (size <= maxBytes) return {data, size};
+                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.82));
+                    if (blob && blob.size <= chunkSize) return new File([blob], file.name || '붙여넣은 이미지.webp', {type: 'image/webp'});
                     scale *= 0.75;
                 }
             } finally {
                 bitmap.close?.();
             }
-            throw new Error(`${file.name}: 이미지를 512KB 이하로 변환하지 못했습니다.`);
+            throw new Error((file.name || '이미지') + ': 이미지를 업로드 가능한 크기로 줄이지 못했습니다.');
         }
 
-        function addFiles(files) {
+        function addFiles(selected) {
+            if (locked) return pending;
             pending = pending.then(async () => {
-                for (const file of Array.from(files)) {
-                    if (!allowed.has(file.type)) {
-                        announce(`${file.name}: PNG, JPG, WebP, GIF 이미지만 첨부할 수 있습니다.`, true);
-                        continue;
-                    }
-                    if (images.length >= maxImages) {
-                        announce('이미지는 5개, 총 2MB 이하만 첨부할 수 있습니다.', true);
-                        break;
-                    }
+                for (const source of Array.from(selected)) {
+                    if (files.length >= 5) { announce('첨부는 최대 5개까지 가능합니다.', true); break; }
                     try {
-                        const {data, size} = await prepareFile(file);
-                        if (images.reduce((sum, image) => sum + image.size, 0) + size > maxTotal) {
-                            announce('이미지의 총 저장 용량은 2MB 이하입니다.', true);
-                            continue;
-                        }
-                        images.push({name: file.name.slice(0, 120), data, size});
+                        const file = await prepare(source);
+                        const name = typeof source.name === 'string' ? source.name.slice(0, 120) : '붙여넣은 이미지';
+                        files.push({
+                            id: crypto.randomUUID(), name: name || '붙여넣은 이미지',
+                            file, previewUrl: URL.createObjectURL(file), nextChunk: 0, uploaded: false
+                        });
                         render();
-                        announce(`${images.length}개 이미지가 준비되었습니다.`);
-                    } catch (error) {
-                        announce(error.message, true);
-                    }
+                        announce(files.length + '개 파일이 준비되었습니다.');
+                    } catch (error) { announce(error.message, true); }
                 }
             });
             return pending;
+        }
+
+        async function preflight() {
+            if (!files.length) return;
+            const response = await fetch("/api/media/status", {credentials: "same-origin"});
+            const data = await response.json();
+            if (!response.ok || !data.configured) {
+                throw new Error(data.message || "서버에 postimage GitHub 토큰이 설정되지 않았습니다.");
+            }
+        }
+
+        async function uploadAll(kind, id, csrfToken) {
+            locked = true;
+            picker.disabled = true;
+            render();
+            const base = '/api/media/' + kind + '/' + id;
+            for (const entry of files) {
+                if (entry.uploaded) continue;
+                const mime = entry.file.type;
+                const name = encodeURIComponent(entry.name);
+                if (imageTypes.has(mime)) {
+                    announce(entry.name + ' 업로드 중…');
+                    await send(base + '/images/' + entry.id + '?name=' + name, entry.file, mime, csrfToken);
+                } else {
+                    const total = Math.ceil(entry.file.size / chunkSize);
+                    const args = '?name=' + name + '&mime=' + encodeURIComponent(mime)
+                        + '&size=' + entry.file.size + '&count=' + total;
+                    for (let index = entry.nextChunk; index < total; index++) {
+                        announce(entry.name + ' 업로드 중… ' + (index + 1) + '/' + total);
+                        await send(base + '/videos/' + entry.id + '/chunks/' + index + args,
+                            entry.file.slice(index * chunkSize, Math.min(entry.file.size, (index + 1) * chunkSize)),
+                            mime, csrfToken);
+                        entry.nextChunk = index + 1;
+                    }
+                    await send(base + '/videos/' + entry.id + '/complete', '{}', 'application/json', csrfToken);
+                }
+                entry.uploaded = true;
+            }
+            announce('첨부파일을 저장했습니다.');
         }
 
         root.querySelector('[data-image-select]').addEventListener('click', () => {
@@ -124,12 +174,12 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
             if (navigator.clipboard?.read) {
                 try {
                     const entries = await navigator.clipboard.read();
-                    const files = [];
+                    const images = [];
                     for (const entry of entries) {
-                        const type = entry.types.find(type => allowed.has(type));
-                        if (type) files.push(await entry.getType(type));
+                        const type = entry.types.find(value => imageTypes.has(value));
+                        if (type) images.push(await entry.getType(type));
                     }
-                    if (files.length) { addFiles(files); return; }
+                    if (images.length) { addFiles(images); return; }
                 } catch (_) {}
             }
             zone.focus();
@@ -139,18 +189,20 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
             addFiles(picker.files);
             picker.value = '';
         });
-        zone.addEventListener('click', () => picker.click());
+        zone.addEventListener('click', () => { if (!locked) picker.click(); });
         form.querySelector('[data-image-open]')?.addEventListener('click', () => {
+            if (locked) return;
             menu.open = true;
             root.scrollIntoView({block: 'nearest', behavior: 'smooth'});
         });
         zone.addEventListener('keydown', event => {
-            if (event.key === 'Enter' || event.key === ' ') {
+            if (!locked && (event.key === 'Enter' || event.key === ' ')) {
                 event.preventDefault();
                 picker.click();
             }
         });
         zone.addEventListener('dragover', event => {
+            if (locked) return;
             event.preventDefault();
             zone.classList.add('border-primary', 'bg-primary/5');
         });
@@ -161,17 +213,25 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
             addFiles(event.dataTransfer.files);
         });
         form.addEventListener('paste', event => {
-            const files = Array.from(event.clipboardData?.items || [])
-                .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+            if (locked) return;
+            const images = Array.from(event.clipboardData?.items || [])
+                .filter(item => item.kind === 'file' && imageTypes.has(item.type))
                 .map(item => item.getAsFile()).filter(Boolean);
-            if (!files.length) return;
-            event.preventDefault();
-            addFiles(files);
+            if (images.length) { event.preventDefault(); addFiles(images); }
         });
 
         return {
             ready: () => pending,
-            clear: () => { images = []; render(); announce('이미지 목록을 비웠습니다.'); }
+            preflight,
+            uploadAll,
+            clear: () => {
+                files.forEach(entry => URL.revokeObjectURL(entry.previewUrl));
+                files = [];
+                locked = false;
+                picker.disabled = false;
+                render();
+                announce('작성 칸에서 Ctrl+V로 복사한 이미지도 추가할 수 있습니다.');
+            }
         };
     }
 

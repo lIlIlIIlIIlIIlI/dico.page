@@ -156,7 +156,7 @@
                     {% endif %}
 
                     <div class="markdown-body dico-markdown min-h-56">{{ post.content_html | safe }}</div>
-                    {% with images=post.images | default([]) %}{% include "layout/attached_images.html" %}{% endwith %}
+                    {% with images=post.images | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_images.html" %}{% endwith %}
                     <div class="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-base-300 pt-5">
                         <button id="mobile-like-button" data-like-button type="button" class="btn btn-ghost btn-sm gap-2 {% if liked %}text-error{% endif %}" data-liked="{{ 'true' if liked else 'false' }}"><span data-like-icon>{{ '♥' if liked else '♡' }}</span>좋아요 <span data-like-count>{{ post.like_count }}</span></button>
                         <button id="mobile-share-button-bottom" data-share-button type="button" class="btn btn-ghost btn-sm">공유</button>
@@ -231,7 +231,7 @@
                     {% endif %}
 
                     <div class="markdown-body dico-markdown min-h-56">{{ post.content_html | safe }}</div>
-                    {% with images=post.images | default([]) %}{% include "layout/attached_images.html" %}{% endwith %}
+                    {% with images=post.images | default([]), kind="posts", item_id=post.id %}{% include "layout/attached_images.html" %}{% endwith %}
                     <div class="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-base-300 pt-5">
                         <button id="like-button" data-like-button type="button" class="btn btn-ghost btn-sm gap-2 {% if liked %}text-error{% endif %}" data-liked="{{ 'true' if liked else 'false' }}"><span id="like-icon" data-like-icon>{{ '♥' if liked else '♡' }}</span>좋아요 <span id="like-count" data-like-count>{{ post.like_count }}</span></button>
                         <button id="share-button-bottom" data-share-button type="button" class="btn btn-ghost btn-sm">공유</button>
