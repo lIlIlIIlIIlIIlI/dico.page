@@ -4,7 +4,7 @@
 
 {% block content %}
 <style>
-    .profile-settings-page { color-scheme: light; background: #f6f8fa; }
+    .profile-settings-page { color-scheme: light; }
     .profile-settings-page [hidden] { display: none !important; }
     .profile-settings-dropzone { cursor: pointer; transition: background 150ms ease, border-color 150ms ease; }
     .profile-settings-dropzone:hover, .profile-settings-dropzone.is-dragover, .profile-settings-dropzone:focus-visible {
@@ -12,25 +12,25 @@
     }
     .profile-settings-preview { width: 112px; height: 112px; border-radius: 50%; object-fit: cover; }
 </style>
-<section class="profile-settings-page min-h-[calc(100vh-4rem)] py-5 sm:py-8" data-async-page data-theme="light" data-profile-settings>
-    <div class="mx-auto grid w-full max-w-6xl items-start gap-6 px-4 sm:px-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <div class="hidden lg:block">{% include "settings/sidebar.html" %}</div>
+<section class="profile-settings-page min-h-[calc(100vh-4rem)] bg-base-200/50" data-async-page data-theme="light" data-profile-settings>
+    <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-5 sm:px-6 sm:py-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:px-4 lg:py-8">
+        <aside class="hidden lg:block">{% include "settings/sidebar.html" %}</aside>
         <main class="min-w-0">
             <div class="mb-5 flex gap-2 lg:hidden" aria-label="설정 메뉴">
                 <a class="btn btn-primary btn-sm" href="{{ url_for('home.profile_settings') }}" aria-current="page">프로필</a>
                 <a class="btn btn-ghost btn-sm" href="{{ url_for('notifications.notification_settings') }}">알림 설정</a>
             </div>
-            <div class="mb-6">
+            <div class="mb-5 sm:mb-6">
                 <h1 class="text-2xl font-bold">프로필 설정</h1>
-                <p class="mt-1 text-sm text-base-content/60">다른 회원에게 표시되는 사진과 소개를 수정할 수 있습니다.</p>
+                <p class="mt-1 text-sm leading-6 text-base-content/60">다른 회원에게 표시되는 사진과 소개를 수정할 수 있습니다.</p>
             </div>
-            <form id="profile-settings-form" action="{{ url_for('home.profile_settings') }}" method="post" class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+            <form id="profile-settings-form" action="{{ url_for('home.profile_settings') }}" method="post" class="space-y-4 sm:space-y-5">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input id="profile-avatar-action" type="hidden" name="avatar_action" value="keep">
                 <input id="profile-avatar-data" type="hidden" name="avatar_data" value="">
-                <div class="space-y-7 p-5 sm:p-8">
+                <section class="rounded-2xl border border-base-300 bg-base-100 p-4 shadow-sm sm:p-6" aria-labelledby="profile-avatar-title">
                     <div>
-                        <h2 class="text-lg font-semibold">프로필 이미지</h2>
+                        <h2 id="profile-avatar-title" class="font-semibold">프로필 이미지</h2>
                         <p class="mt-1 text-sm text-base-content/55">이미지를 끌어놓거나 붙여넣을 수 있습니다. 저장할 때 사진은 data:image 형식으로 보관됩니다.</p>
                         <div class="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center">
                             <div id="profile-avatar-dropzone" class="profile-settings-dropzone flex min-h-40 min-w-0 flex-1 items-center gap-4 rounded-xl border-2 border-dashed border-base-300 p-4" role="button" tabindex="0" aria-label="이미지 선택 또는 붙여넣기">
@@ -52,22 +52,24 @@
                         </div>
                         <p class="mt-2 text-xs text-base-content/45">PNG, JPG, WebP, GIF · 저장되는 이미지 최대 512KB</p>
                     </div>
-                    <div class="border-t border-base-200 pt-6">
+                </section>
+                <section class="rounded-2xl border border-base-300 bg-base-100 p-4 shadow-sm sm:p-6" aria-label="기본 정보">
+                    <div>
                         <label class="block max-w-xl" for="profile-nickname"><span class="font-semibold">닉네임</span><span class="mt-1 block text-xs text-base-content/50">게시글과 댓글에도 표시됩니다.</span></label>
                         <input id="profile-nickname" name="nickname" type="text" value="{{ profile_settings.nickname }}" class="input input-bordered mt-3 w-full max-w-xl" minlength="2" maxlength="20" required autocomplete="nickname">
                     </div>
-                    <div>
+                    <div class="mt-6 border-t border-base-200 pt-6">
                         <label class="block font-semibold" for="profile-headline">한 줄 소개</label>
                         <p class="mt-1 text-xs text-base-content/50">프로필에서 닉네임 아래에 표시됩니다.</p>
                         <input id="profile-headline" name="headline" type="text" value="{{ profile_settings.headline }}" class="input input-bordered mt-3 w-full" maxlength="80" placeholder="나를 한 문장으로 소개해 주세요">
                     </div>
-                    <div>
+                    <div class="mt-6 border-t border-base-200 pt-6">
                         <label class="block font-semibold" for="profile-bio">자기소개</label>
                         <p class="mt-1 text-xs text-base-content/50">프로필 왼쪽에 표시됩니다. 최대 500자입니다.</p>
                         <textarea id="profile-bio" name="bio" class="textarea textarea-bordered mt-3 min-h-36 w-full resize-y leading-6" maxlength="500" placeholder="관심사나 하고 싶은 이야기를 적어 주세요">{{ profile_settings.bio }}</textarea>
                     </div>
-                </div>
-                <div class="flex flex-wrap items-center justify-between gap-3 border-t border-base-200 bg-base-200/30 px-5 py-4 sm:px-8">
+                </section>
+                <div class="flex flex-wrap items-center justify-between gap-3 px-1 py-2">
                     <p id="profile-save-status" class="text-sm {% if error %}text-error{% elif saved %}text-success{% else %}text-base-content/55{% endif %}" role="status" aria-live="polite">{% if error %}{{ error }}{% elif saved %}저장했습니다.{% else %}변경한 내용을 저장해 주세요.{% endif %}</p>
                     <div class="flex gap-2">
                         <a href="{{ url_for('home.user_profile', user_uid=profile_settings.user_uid) }}" class="btn btn-ghost btn-sm">내 프로필 보기</a>
