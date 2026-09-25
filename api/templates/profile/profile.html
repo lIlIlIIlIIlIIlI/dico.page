@@ -55,7 +55,7 @@
             </div>
 
             {% set activity_days = profile.activity_weeks | sum(start=[]) %}
-            {% set recent_activity_days = activity_days[-30:] %}
+            <!-- {% set recent_activity_days = activity_days[-30:] %} -->
             <section class="rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
                 <div class="flex flex-wrap items-end justify-between gap-2">
                     <div>
