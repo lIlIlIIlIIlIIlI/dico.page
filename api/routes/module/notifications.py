@@ -47,7 +47,7 @@ def _save_notification_settings_sync(user_id, settings):
 
 
 def get_notices_sync(limit=50):
-    notices = list(collection("notices").find({}, {"_id": 0}).sort([("is_pinned", -1), ("id", -1)]).limit(limit))
+    notices = list(collection("notices").find({}, {"_id": 0, "images": 0}).sort([("is_pinned", -1), ("id", -1)]).limit(limit))
     for notice in notices:
         notice["is_pinned"] = bool(notice["is_pinned"])
     return notices
@@ -63,12 +63,13 @@ def get_notice_sync(notice_id):
     return notice
 
 
-def create_notice_sync(title, content, is_pinned, author_id, author_nickname):
+def create_notice_sync(title, content, is_pinned, author_id, author_nickname, images=None):
     notice_id = next_id_sync("notices")
     notice = {
         "id": notice_id,
         "title": title,
         "content": content,
+        "images": images or [],
         "is_pinned": bool(is_pinned),
         "author_id": author_id,
         "author_nickname": author_nickname,

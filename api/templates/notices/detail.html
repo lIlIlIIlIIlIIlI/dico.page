@@ -29,6 +29,9 @@
                 </header>
 
                 <div class="markdown-body dico-markdown min-h-64 p-5 sm:p-7">{{ notice.content_html | default(notice.content) | safe }}</div>
+                {% if notice.images %}
+                <div class="px-5 pb-6 sm:px-7">{% with images=notice.images %}{% include "layout/attached_images.html" %}{% endwith %}</div>
+                {% endif %}
             </article>
         </div>
     </div>

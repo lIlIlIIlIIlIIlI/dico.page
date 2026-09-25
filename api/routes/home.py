@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 from pymongo import ReturnDocument
-from pymongo.errors import DuplicateKeyError
 
 try:
     import bleach
@@ -19,7 +18,8 @@ except ImportError:
 
 from quart import Blueprint, abort, current_app, jsonify, redirect, render_template, request, session, url_for
 
-from .module.auth import NICKNAME_PATTERN, ensure_database, login_required, validate_csrf_token
+from .module.auth import ensure_database, login_required, validate_csrf_token
+from .module.image_attachments import validate_image_attachments
 from .module.notifications import create_notification, get_notices_sync
 from ..module.database import collection, next_id_sync, utc_now
 
@@ -73,15 +73,11 @@ def _get_profile_settings_sync(user_id):
     }
 
 
-def _save_profile_settings_sync(user_id, nickname, headline, bio, avatar_action, avatar_data):
+def _save_profile_settings_sync(user_id, headline, bio, avatar_action, avatar_data):
     user_id = int(user_id)
     old_user = collection("users").find_one({"id": user_id}, {"_id": 0, "nickname": 1})
     if not old_user:
         return False
-    if nickname != old_user["nickname"]:
-        collection("users").update_one({"id": user_id}, {"$set": {"nickname": nickname}})
-        collection("posts").update_many({"author_id": user_id}, {"$set": {"author_nickname": nickname}})
-        collection("comments").update_many({"author_id": user_id}, {"$set": {"author_nickname": nickname}})
     changes = {"headline": headline, "bio": bio, "updated_at": utc_now()}
     if avatar_action == "replace":
         changes["avatar_url"] = avatar_data
@@ -227,7 +223,7 @@ def _get_posts_sync(search, category, page, per_page):
     total_pages = max(1, math.ceil(total / per_page))
     page = min(max(page, 1), total_pages)
     rows = list(
-        posts_collection.find(filters, {"_id": 0}).sort("id", -1)
+        posts_collection.find(filters, {"_id": 0, "images": 0}).sort("id", -1)
         .skip((page - 1) * per_page).limit(per_page)
     )
     for row in rows:
@@ -236,7 +232,7 @@ def _get_posts_sync(search, category, page, per_page):
     return rows, total, page, total_pages
 
 
-def _create_post_sync(title, content, category, media_url, author_id, author_nickname):
+def _create_post_sync(title, content, category, media_url, author_id, author_nickname, images=None):
     post_id = next_id_sync("posts")
     collection("posts").insert_one({
         "id": post_id,
@@ -244,6 +240,7 @@ def _create_post_sync(title, content, category, media_url, author_id, author_nic
         "content": content,
         "category": category,
         "media_url": media_url or None,
+        "images": images or [],
         "author_id": int(author_id),
         "author_nickname": author_nickname,
         "views": 0,
@@ -750,15 +747,13 @@ async def profile_settings():
     form = await request.form
     if not validate_csrf_token(form):
         abort(400)
-    nickname = form.get("nickname", "").strip()
+    nickname = settings["nickname"]
     headline = form.get("headline", "").strip()
     bio = form.get("bio", "").strip()
     avatar_action = form.get("avatar_action", "keep")
     avatar_data = form.get("avatar_data", "")
     error = None
-    if not NICKNAME_PATTERN.fullmatch(nickname):
-        error = "닉네임은 한글, 영문, 숫자, 밑줄로 2~20자까지 사용할 수 있습니다."
-    elif len(headline) > 80 or len(bio) > 500:
+    if len(headline) > 80 or len(bio) > 500:
         error = "한 줄 소개는 80자, 자기소개는 500자 이하로 입력해 주세요."
     elif avatar_action not in {"keep", "replace", "remove"}:
         error = "이미지 변경 요청이 올바르지 않습니다."
@@ -769,21 +764,17 @@ async def profile_settings():
             error = str(exc)
 
     if not error:
-        try:
-            saved = await asyncio.to_thread(
-                _save_profile_settings_sync, user_id, nickname, headline, bio, avatar_action, avatar_data
-            )
-        except DuplicateKeyError:
-            error = "이미 사용 중인 닉네임입니다."
-        else:
-            if not saved:
-                abort(404)
+        saved = await asyncio.to_thread(
+            _save_profile_settings_sync, user_id, headline, bio, avatar_action, avatar_data
+        )
+        if not saved:
+            abort(404)
 
     is_async = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     if error:
         if is_async:
             return jsonify({"ok": False, "error": error}), 400
-        settings.update({"nickname": nickname, "headline": headline, "bio": bio})
+        settings.update({"headline": headline, "bio": bio})
         return await render_template("settings/profile.html", profile_settings=settings, error=error), 400
 
     session["nickname"] = nickname
@@ -815,13 +806,18 @@ async def write():
             "category": form.get("category", "general"),
         }
 
-        if not values["title"] or len(values["title"]) > 100:
+        try:
+            images = validate_image_attachments(form.get("image_attachments", "[]"))
+        except ValueError as exc:
+            error = str(exc)
+
+        if not error and (not values["title"] or len(values["title"]) > 100):
             error = "제목은 1자 이상 100자 이하로 입력해 주세요."
-        elif not values["content"] or len(values["content"]) > 10000:
+        elif not error and (not values["content"] or len(values["content"]) > 10000):
             error = "내용은 1자 이상 10,000자 이하로 입력해 주세요."
-        elif values["category"] not in POST_CATEGORIES:
+        elif not error and values["category"] not in POST_CATEGORIES:
             error = "올바른 게시판 분류를 선택해 주세요."
-        else:
+        if not error:
             await ensure_database()
             post_id = await asyncio.to_thread(
                 _create_post_sync,
@@ -831,6 +827,7 @@ async def write():
                 "",
                 session["user_id"],
                 session["nickname"],
+                images,
             )
             redirect_url = url_for("home.post_detail", post_id=post_id)
             if wants_json:
