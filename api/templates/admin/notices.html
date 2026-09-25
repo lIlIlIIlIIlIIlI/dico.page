@@ -149,6 +149,7 @@
     let previewMode = false;
     let previewController = null;
     let previewTimer = null;
+    let savedNotice = null;
 
     function showMessage(text, type = 'success') {
         message.className = `alert ${type === 'error' ? 'alert-error' : 'alert-success'}`;
@@ -446,28 +447,34 @@
 
         try {
             await imageAttachments.ready();
-            const response = await fetch(form.action, {
-                method: 'POST',
-                body: new FormData(form),
-                headers: { 'Accept': 'application/json' }
-            });
-            const data = await response.json();
+            await imageAttachments.preflight();
+            if (!savedNotice) {
+                const response = await fetch(form.action, {
+                    method: 'POST',
+                    body: new FormData(form),
+                    headers: { 'Accept': 'application/json' }
+                });
+                const data = await response.json();
 
-            if (!response.ok || !data.success) {
-                throw new Error(data.message || '공지를 작성하지 못했습니다.');
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || '공지를 작성하지 못했습니다.');
+                }
+
+                savedNotice = data;
             }
-
-            insertNotice(data.notice);
+            await imageAttachments.uploadAll('notices', savedNotice.notice.id, csrfToken);
+            insertNotice(savedNotice.notice);
+            const deliveryText = savedNotice.delivered_count > 0
+                ? ` ${savedNotice.delivered_count}명에게 알림을 보냈습니다.`
+                : '';
+            showMessage(savedNotice.message + deliveryText);
+            savedNotice = null;
             form.reset();
             imageAttachments.clear();
             form.querySelector('[name="send_notification"]').checked = true;
             setPreviewMode(false);
             updateCounters();
 
-            const deliveryText = data.delivered_count > 0
-                ? ` ${data.delivered_count}명에게 알림을 보냈습니다.`
-                : '';
-            showMessage(data.message + deliveryText);
         } catch (error) {
             showMessage(error.message, 'error');
         } finally {

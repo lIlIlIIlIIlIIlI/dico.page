@@ -19,7 +19,6 @@ except ImportError:
 from quart import Blueprint, abort, current_app, jsonify, redirect, render_template, request, session, url_for
 
 from .module.auth import ensure_database, login_required, validate_csrf_token
-from .module.image_attachments import validate_image_attachments
 from .module.notifications import create_notification, get_notices_sync
 from ..module.database import collection, next_id_sync, utc_now
 
@@ -806,11 +805,6 @@ async def write():
             "category": form.get("category", "general"),
         }
 
-        try:
-            images = validate_image_attachments(form.get("image_attachments", "[]"))
-        except ValueError as exc:
-            error = str(exc)
-
         if not error and (not values["title"] or len(values["title"]) > 100):
             error = "제목은 1자 이상 100자 이하로 입력해 주세요."
         elif not error and (not values["content"] or len(values["content"]) > 10000):
@@ -827,11 +821,10 @@ async def write():
                 "",
                 session["user_id"],
                 session["nickname"],
-                images,
             )
             redirect_url = url_for("home.post_detail", post_id=post_id)
             if wants_json:
-                return jsonify({"success": True, "redirect": redirect_url})
+                return jsonify({"success": True, "post_id": post_id, "redirect": redirect_url})
             return redirect(redirect_url)
 
         if error and wants_json:

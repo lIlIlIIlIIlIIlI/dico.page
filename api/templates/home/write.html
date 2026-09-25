@@ -73,6 +73,7 @@
     let previewMode = false;
     let previewController = null;
     let previewTimer = null;
+    let savedPost = null;
 
     function updateCount() {
         contentCount.textContent = contentInput.value.length.toLocaleString('ko-KR');
@@ -298,21 +299,26 @@
 
         try {
             await imageAttachments.ready();
-            const response = await fetch(form.action, {
-                method: 'POST',
-                body: new FormData(form),
-                headers: { 'Accept': 'application/json' }
-            });
-            const data = await response.json();
+            await imageAttachments.preflight();
+            if (!savedPost) {
+                const response = await fetch(form.action, {
+                    method: 'POST',
+                    body: new FormData(form),
+                    headers: { 'Accept': 'application/json' }
+                });
+                const data = await response.json();
 
-            if (!response.ok || !data.success) {
-                window.alert(data.message || '게시글을 등록하지 못했습니다.');
-                return;
+                if (!response.ok || !data.success) {
+                    window.alert(data.message || '게시글을 등록하지 못했습니다.');
+                    return;
+                }
+
+                savedPost = data;
             }
-
-            await window.appNavigate(data.redirect);
+            await imageAttachments.uploadAll('posts', savedPost.post_id, csrfToken);
+            await window.appNavigate(savedPost.redirect);
         } catch (error) {
-            window.alert('서버와 통신하지 못했습니다.');
+            window.alert(error.message || '서버와 통신하지 못했습니다.');
         } finally {
             button.disabled = false;
             button.classList.remove('loading');
