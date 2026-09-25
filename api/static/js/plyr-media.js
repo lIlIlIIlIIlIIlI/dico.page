@@ -26,15 +26,19 @@
         });
     }
 
+    const observer = new MutationObserver(scheduleMount);
+    function observePage() {
+        observer.disconnect();
+        const page = document.getElementById('app-content');
+        if (page) observer.observe(page, {childList: true, subtree: true});
+        scheduleMount();
+    }
+
+    window.DicoPlyr = {apply: scheduleMount};
     window.addEventListener('app:navigation-start', () => {
         for (const player of players) player.destroy();
         players.clear();
     });
-    window.addEventListener('app:navigation-end', scheduleMount);
-    document.addEventListener('DOMContentLoaded', () => {
-        scheduleMount();
-        new MutationObserver(scheduleMount).observe(document.getElementById('app-content'), {
-            childList: true, subtree: true
-        });
-    });
+    window.addEventListener('app:navigation-end', observePage);
+    document.addEventListener('DOMContentLoaded', observePage);
 })();
