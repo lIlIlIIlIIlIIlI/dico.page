@@ -4,113 +4,232 @@
 
 {% block content %}
 <style>
-    .dico-profile-activity {
+    .dico-profile-page {
+        --profile-text: #1f2328;
+        --profile-muted: #59636e;
+        --profile-border: #d1d9e0;
+        --profile-link: #0969da;
+        background: #fff;
+        color: var(--profile-text);
+        min-height: calc(100vh - 4rem);
+        color-scheme: light;
+    }
+    .dico-profile-page a { color: inherit; }
+    .dico-profile-page a:hover { color: var(--profile-link); }
+    .dico-profile-layout {
         display: grid;
-        grid-auto-flow: column;
-        grid-template-rows: repeat(7, 0.78rem);
-        grid-auto-columns: 0.78rem;
-        gap: 0.25rem;
-        width: max-content;
-        max-width: 100%;
-        margin-inline: auto;
-        padding: 0.25rem 0 0.5rem;
+        grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
+        gap: 32px;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 32px 24px 64px;
+    }
+    .dico-profile-main { min-width: 0; }
+    .dico-profile-tabs {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        border-bottom: 1px solid var(--profile-border);
+        margin-bottom: 24px;
+    }
+    .dico-profile-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 2px;
+        border-bottom: 2px solid #fd8c73;
+        font-size: 14px;
+        font-weight: 600;
+    }
+    .dico-profile-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+    .dico-profile-header h2 { font-size: 16px; font-weight: 600; }
+    .dico-profile-header p { font-size: 12px; color: var(--profile-muted); }
+    .dico-profile-card {
+        border: 1px solid var(--profile-border);
+        border-radius: 6px;
+        background: #fff;
+    }
+    .dico-profile-contributions { padding: 18px 20px 14px; }
+    .dico-profile-scroll { max-width: 100%; overflow-x: auto; padding-bottom: 8px; scrollbar-width: thin; }
+    .dico-profile-chart { width: max-content; }
+    .dico-profile-months {
+        display: grid;
+        grid-template-columns: repeat(53, 11px);
+        column-gap: 4px;
+        height: 23px;
+        margin-left: 34px;
+        font-size: 11px;
+        color: var(--profile-muted);
+        white-space: nowrap;
+    }
+    .dico-profile-calendar { display: flex; gap: 10px; }
+    .dico-profile-weekdays {
+        display: grid;
+        grid-template-rows: repeat(7, 11px);
+        row-gap: 4px;
+        flex: 0 0 24px;
+        width: 24px;
+        font-size: 10px;
+        line-height: 11px;
+        color: var(--profile-muted);
+    }
+    .dico-profile-weeks { display: flex; gap: 4px; }
+    .dico-profile-week {
+        display: grid;
+        grid-template-rows: repeat(7, 11px);
+        gap: 4px;
+        width: 11px;
     }
     .dico-profile-cell {
-        width: 0.78rem;
-        height: 0.78rem;
-        border: 1px solid color-mix(in srgb, var(--color-base-content) 6%, transparent);
-        border-radius: 0.2rem;
+        display: block;
+        width: 11px;
+        height: 11px;
+        border: 1px solid rgba(27, 31, 35, .06);
+        border-radius: 2px;
+        background: #ebedf0;
     }
-    .dico-profile-cell.level-0 { background: var(--color-base-200); }
-    .dico-profile-cell.level-1 { background: color-mix(in srgb, var(--color-primary) 22%, var(--color-base-100)); }
-    .dico-profile-cell.level-2 { background: color-mix(in srgb, var(--color-primary) 42%, var(--color-base-100)); }
-    .dico-profile-cell.level-3 { background: color-mix(in srgb, var(--color-primary) 66%, var(--color-base-100)); }
-    .dico-profile-cell.level-4 { background: var(--color-primary); }
-    @media (max-width: 640px) {
-        .dico-profile-activity {
-            grid-template-rows: repeat(7, 0.68rem);
-            grid-auto-columns: 0.68rem;
-            gap: 0.2rem;
-        }
-        .dico-profile-cell { width: 0.68rem; height: 0.68rem; }
+    .dico-profile-cell.level-1 { background: #9be9a8; }
+    .dico-profile-cell.level-2 { background: #40c463; }
+    .dico-profile-cell.level-3 { background: #30a14e; }
+    .dico-profile-cell.level-4 { background: #216e39; }
+    .dico-profile-cell.is-outside { visibility: hidden; }
+    .dico-profile-legend {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+        margin-top: 12px;
+        font-size: 11px;
+        color: var(--profile-muted);
+    }
+    .dico-profile-legend span:first-child { margin-right: 3px; }
+    .dico-profile-legend span:last-child { margin-left: 3px; }
+    .dico-profile-overview {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin: 22px 0 32px;
+    }
+    .dico-profile-overview > div { padding: 16px; }
+    .dico-profile-overview strong { display: block; font-size: 22px; line-height: 1.2; }
+    .dico-profile-overview span { display: block; margin-top: 5px; color: var(--profile-muted); font-size: 12px; }
+    .dico-profile-list { margin-bottom: 24px; overflow: hidden; }
+    .dico-profile-list-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--profile-border);
+    }
+    .dico-profile-list-header h3 { font-size: 15px; font-weight: 600; }
+    .dico-profile-list-header span { color: var(--profile-muted); font-size: 12px; white-space: nowrap; }
+    .dico-profile-row { display: block; padding: 14px 18px; border-bottom: 1px solid #eaeef2; }
+    .dico-profile-row:last-child { border-bottom: 0; }
+    .dico-profile-row:hover { background: #f6f8fa; }
+    .dico-profile-row-title { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .dico-profile-row-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--profile-link); font-size: 14px; font-weight: 600; }
+    .dico-profile-row-title small { margin-left: auto; flex-shrink: 0; color: var(--profile-muted); font-size: 12px; }
+    .dico-profile-tag { flex-shrink: 0; padding: 1px 7px; border: 1px solid var(--profile-border); border-radius: 12px; color: var(--profile-muted); font-size: 11px; }
+    .dico-profile-excerpt { margin-top: 5px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--profile-muted); font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .dico-profile-empty { padding: 34px 18px; text-align: center; color: var(--profile-muted); font-size: 13px; }
+    @media (max-width: 767px) {
+        .dico-profile-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 20px 16px 48px; }
+        .dico-profile-contributions { padding: 16px 14px 12px; }
+        .dico-profile-scroll { direction: rtl; }
+        .dico-profile-chart { direction: ltr; }
+        .dico-profile-overview { gap: 8px; }
+        .dico-profile-overview > div { padding: 12px; }
+        .dico-profile-overview strong { font-size: 19px; }
+        .dico-profile-row-title small { display: none; }
+    }
+    @media (max-width: 380px) {
+        .dico-profile-overview { grid-template-columns: 1fr; }
     }
 </style>
 
-<section class="min-h-[calc(100vh-4rem)] bg-base-200/60" data-async-page>
-    <div class="mx-auto grid w-full max-w-7xl items-start gap-6 px-4 py-6 lg:grid-cols-[250px_minmax(0,1fr)] lg:py-8">
-       {% include "profile/sidebar.html" %}
+<section class="dico-profile-page" data-theme="light" data-async-page>
+    <div class="dico-profile-layout">
+        {% include "profile/sidebar.html" %}
+        <main class="dico-profile-main">
+            <nav class="dico-profile-tabs" aria-label="프로필 메뉴">
+                <span class="dico-profile-tab" aria-current="page">활동</span>
+            </nav>
 
-        <main class="min-w-0">
-            <div class="breadcrumbs max-w-full py-0 text-sm text-base-content/50">
-                <ul>
-                    <li><a href="{{ url_for('home.index') }}">홈</a></li>
-                    <li>프로필</li>
-                    <li>{{ profile.nickname }}</li>
-                </ul>
+            <div class="dico-profile-header">
+                <h2>{{ profile.activity_total }}회의 활동 · 최근 1년</h2>
+                <p>{{ profile.activity_start }} ~ {{ profile.activity_end }}</p>
             </div>
-
-            <div class="mb-5 mt-3">
-                <h2 class="text-2xl font-bold">{{ profile.nickname }}의 활동</h2>
-                <p class="mt-1 text-sm text-base-content/55">최근 30일 동안 커뮤니티에서 남긴 기록입니다.</p>
-            </div>
-
-            {% set activity_days = profile.activity_weeks | sum(start=[]) %}
-            <!-- {% set recent_activity_days = activity_days[-30:] %} -->
-            <section class="rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm sm:p-6">
-                <div class="flex flex-wrap items-end justify-between gap-2">
-                    <div>
-                        <h3 class="font-bold">활동 잔디</h3>
-                        <p class="mt-1 text-xs text-base-content/50">최근 1개월(30일)의 게시글과 댓글 활동입니다.</p>
-                    </div>
-                    <span class="text-sm font-medium text-primary">{{ recent_activity_days | sum(attribute='count') }}회 활동</span>
-                </div>
-                <div class="dico-profile-activity mt-5" role="list" aria-label="최근 30일 활동량">
-                    {% for cell in recent_activity_days %}
-                    <span role="listitem" class="dico-profile-cell level-{{ cell.level }}" title="{{ cell.date }} · {{ cell.count }}회 활동" aria-label="{{ cell.date }} {{ cell.count }}회 활동"></span>
-                    {% endfor %}
-                </div>
-                <div class="mt-3 flex items-center justify-end gap-2 text-[11px] text-base-content/45">
-                    <span>적음</span><span class="dico-profile-cell level-0"></span><span class="dico-profile-cell level-1"></span><span class="dico-profile-cell level-2"></span><span class="dico-profile-cell level-3"></span><span class="dico-profile-cell level-4"></span><span>많음</span>
-                </div>
-            </section>
-
-            <section class="mt-6 rounded-2xl border border-base-300 bg-base-100 shadow-sm">
-                <div class="flex items-center justify-between border-b border-base-200 px-5 py-4 sm:px-6">
-                    <div><h3 class="font-bold">최근 작성글</h3><p class="mt-1 text-xs text-base-content/45">최근에 작성한 게시글 10개</p></div>
-                    <span class="badge badge-ghost">{{ profile.posts_count }}개</span>
-                </div>
-                {% if profile.posts %}
-                <div class="divide-y divide-base-200">
-                    {% for post in profile.posts %}
-                    <a href="{{ url_for('home.post_detail', post_id=post.id) }}" class="flex min-w-0 items-center gap-3 px-5 py-4 transition hover:bg-base-200/50 sm:px-6">
-                        <span class="badge badge-sm shrink-0 {% if post.category == 'question' %}badge-warning{% elif post.category == 'info' %}badge-info{% else %}badge-ghost{% endif %}">{{ {'general': '자유', 'question': '질문', 'info': '정보'}.get(post.category, '자유') }}</span>
-                        <span class="min-w-0 flex-1 truncate font-medium hover:text-primary">{{ post.title }}</span>
-                        {% if post.comment_count %}<span class="shrink-0 text-xs font-semibold text-primary">[{{ post.comment_count }}]</span>{% endif %}
-                        <time class="hidden shrink-0 text-xs text-base-content/40 sm:block" datetime="{{ post.created_at }}">{{ post.created_at[:16].replace('T', ' ') }}</time>
-                    </a>
-                    {% endfor %}
-                </div>
-                {% else %}<p class="px-5 py-12 text-center text-sm text-base-content/45">아직 작성한 게시글이 없습니다.</p>{% endif %}
-            </section>
-
-            <section class="mt-6 rounded-2xl border border-base-300 bg-base-100 shadow-sm">
-                <div class="flex items-center justify-between border-b border-base-200 px-5 py-4 sm:px-6">
-                    <div><h3 class="font-bold">최근 작성 댓글</h3><p class="mt-1 text-xs text-base-content/45">최근에 남긴 댓글 10개</p></div>
-                    <span class="badge badge-ghost">{{ profile.comments_count }}개</span>
-                </div>
-                {% if profile.comments %}
-                <div class="divide-y divide-base-200">
-                    {% for comment in profile.comments %}
-                    <a href="{{ url_for('home.post_detail', post_id=comment.post_id) }}#comments" class="block px-5 py-4 transition hover:bg-base-200/50 sm:px-6">
-                        <div class="flex items-center justify-between gap-3">
-                            <p class="min-w-0 truncate text-sm font-medium">{{ comment.post_title }}</p>
-                            <time class="shrink-0 text-xs text-base-content/40" datetime="{{ comment.created_at }}">{{ comment.created_at[:16].replace('T', ' ') }}</time>
+            <section class="dico-profile-card dico-profile-contributions" aria-label="최근 1년 활동 잔디">
+                <div class="dico-profile-scroll" tabindex="0" aria-label="활동 잔디, 좌우로 스크롤 가능">
+                    <div class="dico-profile-chart">
+                        <div class="dico-profile-months" aria-hidden="true">
+                            {% for month in profile.activity_months %}
+                            <span style="grid-column: {{ month.week + 1 }}">{{ month.label }}</span>
+                            {% endfor %}
                         </div>
-                        <p class="mt-2 line-clamp-2 whitespace-pre-wrap break-words text-sm leading-6 text-base-content/65">{{ comment.content }}</p>
-                    </a>
-                    {% endfor %}
+                        <div class="dico-profile-calendar">
+                            <div class="dico-profile-weekdays" aria-hidden="true">
+                                <span></span><span>월</span><span></span><span>수</span><span></span><span>금</span><span></span>
+                            </div>
+                            <div class="dico-profile-weeks">
+                                {% for week in profile.activity_weeks %}
+                                <div class="dico-profile-week">
+                                    {% for cell in week %}
+                                    {% if cell.outside %}
+                                    <span class="dico-profile-cell is-outside" aria-hidden="true"></span>
+                                    {% else %}
+                                    <time class="dico-profile-cell level-{{ cell.level }}" datetime="{{ cell.date }}" title="{{ cell.date }} · {{ cell.count }}회 활동" aria-label="{{ cell.date }} {{ cell.count }}회 활동"></time>
+                                    {% endif %}
+                                    {% endfor %}
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                {% else %}<p class="px-5 py-12 text-center text-sm text-base-content/45">아직 작성한 댓글이 없습니다.</p>{% endif %}
+                <div class="dico-profile-legend" aria-label="활동량: 옅은색부터 짙은색까지">
+                    <span>적음</span>
+                    {% for level in range(5) %}<span class="dico-profile-cell level-{{ level }}" aria-hidden="true"></span>{% endfor %}
+                    <span>많음</span>
+                </div>
+            </section>
+
+            <div class="dico-profile-overview" aria-label="활동 요약">
+                <div class="dico-profile-card"><strong>{{ profile.posts_count }}</strong><span>전체 작성글</span></div>
+                <div class="dico-profile-card"><strong>{{ profile.comments_count }}</strong><span>전체 작성 댓글</span></div>
+                <div class="dico-profile-card"><strong>{{ profile.likes_received }}</strong><span>받은 추천</span></div>
+            </div>
+
+            <section class="dico-profile-card dico-profile-list" aria-labelledby="profile-posts-heading">
+                <div class="dico-profile-list-header"><h3 id="profile-posts-heading">최근 작성글</h3><span>최대 10개</span></div>
+                {% for post in profile.posts %}
+                <a class="dico-profile-row" href="{{ url_for('home.post_detail', post_id=post.id) }}">
+                    <div class="dico-profile-row-title">
+                        <span class="dico-profile-tag">{{ {'general': '자유', 'question': '질문', 'info': '정보'}.get(post.category, '자유') }}</span>
+                        <strong>{{ post.title }}</strong>
+                        {% if post.comment_count %}<span class="dico-profile-tag">댓글 {{ post.comment_count }}</span>{% endif %}
+                        <small>{{ post.created_at[:10] }}</small>
+                    </div>
+                </a>
+                {% else %}<p class="dico-profile-empty">아직 작성한 게시글이 없습니다.</p>{% endfor %}
+            </section>
+
+            <section class="dico-profile-card dico-profile-list" aria-labelledby="profile-comments-heading">
+                <div class="dico-profile-list-header"><h3 id="profile-comments-heading">최근 작성 댓글</h3><span>최대 10개</span></div>
+                {% for comment in profile.comments %}
+                <a class="dico-profile-row" href="{{ url_for('home.post_detail', post_id=comment.post_id) }}#comments">
+                    <div class="dico-profile-row-title"><strong>{{ comment.post_title }}</strong><small>{{ comment.created_at[:10] }}</small></div>
+                    <p class="dico-profile-excerpt">{{ comment.content }}</p>
+                </a>
+                {% else %}<p class="dico-profile-empty">아직 작성한 댓글이 없습니다.</p>{% endfor %}
             </section>
         </main>
     </div>
