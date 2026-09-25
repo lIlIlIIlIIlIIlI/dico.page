@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+
+{% block title %}프로필 설정 | Dico.page{% endblock %}
+
+{% block content %}
+<style>
+    .profile-settings-page { color-scheme: light; background: #f6f8fa; }
+    .profile-settings-page [hidden] { display: none !important; }
+    .profile-settings-dropzone { cursor: pointer; transition: background 150ms ease, border-color 150ms ease; }
+    .profile-settings-dropzone:hover, .profile-settings-dropzone.is-dragover, .profile-settings-dropzone:focus-visible {
+        border-color: #4f46e5; background: #f2f1ff; outline: none;
+    }
+    .profile-settings-preview { width: 112px; height: 112px; border-radius: 50%; object-fit: cover; }
+</style>
+<section class="profile-settings-page min-h-[calc(100vh-4rem)] py-5 sm:py-8" data-async-page data-theme="light" data-profile-settings>
+    <div class="mx-auto grid w-full max-w-6xl items-start gap-6 px-4 sm:px-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <div class="hidden lg:block">{% include "settings/sidebar.html" %}</div>
+        <main class="min-w-0">
+            <div class="mb-5 flex gap-2 lg:hidden" aria-label="설정 메뉴">
+                <a class="btn btn-primary btn-sm" href="{{ url_for('home.profile_settings') }}" aria-current="page">프로필</a>
+                <a class="btn btn-ghost btn-sm" href="{{ url_for('notifications.notification_settings') }}">알림 설정</a>
+            </div>
+            <div class="mb-6">
+                <h1 class="text-2xl font-bold">프로필 설정</h1>
+                <p class="mt-1 text-sm text-base-content/60">다른 회원에게 표시되는 사진과 소개를 수정할 수 있습니다.</p>
+            </div>
+            <form id="profile-settings-form" action="{{ url_for('home.profile_settings') }}" method="post" class="overflow-hidden rounded-2xl border border-base-300 bg-base-100 shadow-sm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input id="profile-avatar-action" type="hidden" name="avatar_action" value="keep">
+                <input id="profile-avatar-data" type="hidden" name="avatar_data" value="">
+                <div class="space-y-7 p-5 sm:p-8">
+                    <div>
+                        <h2 class="text-lg font-semibold">프로필 이미지</h2>
+                        <p class="mt-1 text-sm text-base-content/55">이미지를 끌어놓거나 붙여넣을 수 있습니다. 저장할 때 사진은 data:image 형식으로 보관됩니다.</p>
+                        <div class="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center">
+                            <div id="profile-avatar-dropzone" class="profile-settings-dropzone flex min-h-40 min-w-0 flex-1 items-center gap-4 rounded-xl border-2 border-dashed border-base-300 p-4" role="button" tabindex="0" aria-label="이미지 선택 또는 붙여넣기">
+                                <img id="profile-avatar-preview" class="profile-settings-preview shrink-0" src="{{ profile_settings.avatar_url }}" alt="프로필 이미지 미리보기" {% if not profile_settings.avatar_url %}hidden{% endif %}>
+                                <span id="profile-avatar-fallback" class="flex size-28 shrink-0 items-center justify-center rounded-full bg-primary/10 text-4xl font-bold text-primary" {% if profile_settings.avatar_url %}hidden{% endif %}>{{ profile_settings.nickname | first }}</span>
+                                <span class="min-w-0 text-sm leading-6 text-base-content/60">여기에 사진을 놓거나 클릭하세요.<br>Ctrl+V로 복사한 이미지나 data:image 주소를 붙여넣을 수도 있습니다.</span>
+                            </div>
+                            <div class="flex shrink-0 items-center gap-2 sm:flex-col sm:items-stretch">
+                                <details id="profile-avatar-menu" class="dropdown dropdown-end sm:dropdown-left">
+                                    <summary class="btn btn-outline btn-sm">이미지 변경</summary>
+                                    <ul class="menu dropdown-content z-20 mt-2 w-44 rounded-xl border border-base-300 bg-base-100 p-2 shadow-lg">
+                                        <li><button id="profile-avatar-select" type="button">파일 선택</button></li>
+                                        <li><button id="profile-avatar-paste" type="button">이미지 붙여넣기</button></li>
+                                    </ul>
+                                </details>
+                                <button id="profile-avatar-remove" type="button" class="btn btn-ghost btn-sm text-error">사진 삭제</button>
+                            </div>
+                            <input id="profile-avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
+                        </div>
+                        <p class="mt-2 text-xs text-base-content/45">PNG, JPG, WebP, GIF · 저장되는 이미지 최대 512KB</p>
+                    </div>
+                    <div class="border-t border-base-200 pt-6">
+                        <label class="block max-w-xl" for="profile-nickname"><span class="font-semibold">닉네임</span><span class="mt-1 block text-xs text-base-content/50">게시글과 댓글에도 표시됩니다.</span></label>
+                        <input id="profile-nickname" name="nickname" type="text" value="{{ profile_settings.nickname }}" class="input input-bordered mt-3 w-full max-w-xl" minlength="2" maxlength="20" required autocomplete="nickname">
+                    </div>
+                    <div>
+                        <label class="block font-semibold" for="profile-headline">한 줄 소개</label>
+                        <p class="mt-1 text-xs text-base-content/50">프로필에서 닉네임 아래에 표시됩니다.</p>
+                        <input id="profile-headline" name="headline" type="text" value="{{ profile_settings.headline }}" class="input input-bordered mt-3 w-full" maxlength="80" placeholder="나를 한 문장으로 소개해 주세요">
+                    </div>
+                    <div>
+                        <label class="block font-semibold" for="profile-bio">자기소개</label>
+                        <p class="mt-1 text-xs text-base-content/50">프로필 왼쪽에 표시됩니다. 최대 500자입니다.</p>
+                        <textarea id="profile-bio" name="bio" class="textarea textarea-bordered mt-3 min-h-36 w-full resize-y leading-6" maxlength="500" placeholder="관심사나 하고 싶은 이야기를 적어 주세요">{{ profile_settings.bio }}</textarea>
+                    </div>
+                </div>
+                <div class="flex flex-wrap items-center justify-between gap-3 border-t border-base-200 bg-base-200/30 px-5 py-4 sm:px-8">
+                    <p id="profile-save-status" class="text-sm {% if error %}text-error{% elif saved %}text-success{% else %}text-base-content/55{% endif %}" role="status" aria-live="polite">{% if error %}{{ error }}{% elif saved %}저장했습니다.{% else %}변경한 내용을 저장해 주세요.{% endif %}</p>
+                    <div class="flex gap-2">
+                        <a href="{{ url_for('home.user_profile', user_uid=profile_settings.user_uid) }}" class="btn btn-ghost btn-sm">내 프로필 보기</a>
+                        <button id="profile-save-button" type="submit" class="btn btn-primary btn-sm">저장</button>
+                    </div>
+                </div>
+            </form>
+        </main>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const root = document.querySelector('[data-profile-settings]');
+    if (!root) return;
+    const form = root.querySelector('#profile-settings-form');
+    const zone = root.querySelector('#profile-avatar-dropzone');
+    const picker = root.querySelector('#profile-avatar-file');
+    const preview = root.querySelector('#profile-avatar-preview');
+    const fallback = root.querySelector('#profile-avatar-fallback');
+    const action = root.querySelector('#profile-avatar-action');
+    const dataInput = root.querySelector('#profile-avatar-data');
+    const status = root.querySelector('#profile-save-status');
+    const saveButton = root.querySelector('#profile-save-button');
+    const menu = root.querySelector('#profile-avatar-menu');
+    const allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+    const maxBytes = 512 * 1024;
+
+    function announce(message, failed = false) {
+        status.textContent = message;
+        status.classList.toggle('text-error', failed);
+        status.classList.toggle('text-success', !failed);
+        status.classList.remove('text-base-content/55');
+    }
+    function showImage(src) {
+        preview.hidden = !src;
+        fallback.hidden = !!src;
+        if (src) preview.src = src;
+        else preview.removeAttribute('src');
+    }
+    function readFile(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('이미지를 읽을 수 없습니다.'));
+            reader.readAsDataURL(file);
+        });
+    }
+    function pasteDataUri(value) {
+        const data = String(value || '').trim();
+        if (!/^data:image\/(?:png|jpeg|webp|gif);base64,/.test(data)) return false;
+        if (data.length > 700000) {
+            announce('붙여넣은 이미지가 너무 큽니다. 파일 선택으로 이미지를 줄여 주세요.', true);
+            return true;
+        }
+        dataInput.value = data;
+        action.value = 'replace';
+        showImage(data);
+        announce('붙여넣은 이미지가 준비되었습니다. 저장 버튼을 눌러 적용해 주세요.');
+        return true;
+    }
+    async function chooseFile(file) {
+        try {
+            if (!file || !allowed.includes(file.type)) throw new Error('PNG, JPG, WebP, GIF 이미지만 사용할 수 있습니다.');
+            if (file.size > 8 * 1024 * 1024) throw new Error('원본 파일은 8MB 이하로 선택해 주세요.');
+            let data;
+            if (file.size <= maxBytes) {
+                data = await readFile(file);
+            } else {
+                if (!window.createImageBitmap) throw new Error('이미지를 512KB 이하로 줄여서 다시 선택해 주세요.');
+                const bitmap = await createImageBitmap(file);
+                const scale = Math.min(1, 512 / Math.max(bitmap.width, bitmap.height));
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+                canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+                canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                bitmap.close?.();
+                data = canvas.toDataURL('image/webp', 0.82);
+                if (!data.startsWith('data:image/webp;base64,')) data = canvas.toDataURL('image/png');
+            }
+            if ((data.split(',')[1]?.length || 0) * 3 / 4 > maxBytes) throw new Error('변환된 이미지가 512KB를 넘습니다. 더 작은 이미지를 선택해 주세요.');
+            dataInput.value = data;
+            action.value = 'replace';
+            showImage(data);
+            announce('사진이 준비되었습니다. 저장 버튼을 눌러 적용해 주세요.');
+        } catch (error) {
+            announce(error.message || '이미지를 불러오지 못했습니다.', true);
+        }
+    }
+    picker.addEventListener('change', () => {
+        if (picker.files[0]) chooseFile(picker.files[0]);
+        picker.value = '';
+    });
+    zone.addEventListener('click', () => picker.click());
+    zone.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); picker.click(); }
+    });
+    zone.addEventListener('dragover', event => { event.preventDefault(); zone.classList.add('is-dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('is-dragover'));
+    zone.addEventListener('drop', event => {
+        event.preventDefault();
+        zone.classList.remove('is-dragover');
+        chooseFile(Array.from(event.dataTransfer.files).find(file => allowed.includes(file.type)));
+    });
+    root.addEventListener('paste', event => {
+        if (event.target.closest('input:not([type=file]), textarea')) return;
+        const file = Array.from(event.clipboardData?.items || [])
+            .map(item => item.kind === 'file' ? item.getAsFile() : null)
+            .find(item => item && allowed.includes(item.type));
+        if (file) { event.preventDefault(); chooseFile(file); return; }
+        const value = (event.clipboardData?.getData('text/plain') || '').trim();
+        if (pasteDataUri(value)) event.preventDefault();
+    });
+    root.querySelector('#profile-avatar-select').addEventListener('click', () => { menu.open = false; picker.click(); });
+    root.querySelector('#profile-avatar-paste').addEventListener('click', async () => {
+        menu.open = false;
+        if (!navigator.clipboard?.read) {
+            try {
+                if (navigator.clipboard?.readText && pasteDataUri(await navigator.clipboard.readText())) return;
+            } catch (_) {}
+            zone.focus();
+            announce('이미지 영역에 초점을 맞춘 뒤 Ctrl+V로 붙여넣어 주세요.');
+            return;
+        }
+        try {
+            const entries = await navigator.clipboard.read();
+            for (const entry of entries) {
+                const type = entry.types.find(type => allowed.includes(type));
+                if (type) { await chooseFile(await entry.getType(type)); return; }
+            }
+            if (navigator.clipboard.readText && pasteDataUri(await navigator.clipboard.readText())) return;
+            announce('클립보드에 이미지가 없습니다.', true);
+        } catch (_) {
+            zone.focus();
+            announce('클립보드 읽기가 제한되었습니다. Ctrl+V로 붙여넣어 주세요.');
+        }
+    });
+    root.querySelector('#profile-avatar-remove').addEventListener('click', () => {
+        action.value = 'remove';
+        dataInput.value = '';
+        showImage('');
+        announce('사진 삭제가 준비되었습니다. 저장 버튼을 눌러 적용해 주세요.');
+    });
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        saveButton.disabled = true;
+        announce('저장 중입니다…');
+        try {
+            const response = await fetch(form.action, {
+                method: 'POST',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                body: new FormData(form),
+                credentials: 'same-origin'
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) throw new Error(result.error || '저장하지 못했습니다.');
+            const avatarButton = document.querySelector('[data-profile-avatar-button]');
+            if (avatarButton) {
+                avatarButton.replaceChildren();
+                if (!preview.hidden) {
+                    const img = document.createElement('img');
+                    img.src = preview.src;
+                    img.alt = '';
+                    img.className = 'size-full rounded-full object-cover';
+                    avatarButton.appendChild(img);
+                } else {
+                    avatarButton.textContent = result.nickname.charAt(0);
+                }
+                avatarButton.setAttribute('aria-label', `${result.nickname} 프로필 메뉴`);
+            }
+            fallback.textContent = result.nickname.charAt(0);
+            action.value = 'keep';
+            dataInput.value = '';
+            announce('프로필을 저장했습니다.');
+        } catch (error) {
+            announce(error.message || '저장하지 못했습니다. 다시 시도해 주세요.', true);
+        } finally {
+            saveButton.disabled = false;
+        }
+    });
+})();
+</script>
+{% endblock %}

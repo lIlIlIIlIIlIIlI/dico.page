@@ -28,10 +28,16 @@ def _fetch_user_by_email_sync(email):
 
 
 def _fetch_user_by_id_sync(user_id):
-    return collection("users").find_one(
+    user = collection("users").find_one(
         {"id": int(user_id)},
         {"_id": 0, "id": 1, "user_uid": 1, "email": 1, "nickname": 1, "role": 1},
     )
+    if user:
+        profile = collection("user_profiles").find_one(
+            {"user_id": int(user_id)}, {"_id": 0, "avatar_url": 1}
+        ) or {}
+        user["avatar_url"] = profile.get("avatar_url", "") or ""
+    return user
 
 
 async def get_user_by_id(user_id):

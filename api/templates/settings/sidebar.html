@@ -3,7 +3,12 @@
 
     <ul class="menu w-full gap-1 p-0">
         <li>
-            <a href="{{ url_for('notifications.notification_settings') }}" class="active">
+            <a href="{{ url_for('home.profile_settings') }}" {% if request.path == url_for('home.profile_settings') %}class="active" aria-current="page"{% endif %}>
+                프로필 설정
+            </a>
+        </li>
+        <li>
+            <a href="{{ url_for('notifications.notification_settings') }}" {% if request.path == url_for('notifications.notification_settings') %}class="active" aria-current="page"{% endif %}>
                 알림 설정
             </a>
         </li>
