@@ -6,9 +6,11 @@ Posts and notices store only media metadata in MongoDB. The server writes actual
 
 - `게시글/{id}/이미지/{media_id}.{extension}`
 - `게시글/{id}/영상/{media_id}/{chunk_number}.part`
+- `게시글/{id}/첨부파일/{file_id}/{chunk_number}.part`
 - `공지/{id}/이미지/{media_id}.{extension}`
 - `공지/{id}/영상/{media_id}/{chunk_number}.part`
+- `공지/{id}/첨부파일/{file_id}/{chunk_number}.part`
 
-Images are at most 768 KiB after optional browser resizing. Videos are at most 20 MiB, transferred as 768 KiB chunks. A video is committed once all chunks arrive. Incomplete upload records expire after 24 hours. Completed files are served via `/media/<kind>/<id>/<media_id>`; video responses support byte ranges. Existing data URL images still render.
+Images are at most 768 KiB after optional browser resizing. Videos and general attachments are at most 20 MiB each, transferred as 768 KiB chunks. General attachments support PDF, ZIP, TXT, CSV, HWP, HWPX, DOCX, XLSX and PPTX, with five slots separate from the five image/video slots. A file is committed once all chunks arrive. Incomplete upload records expire after 24 hours. Completed files are served via `/media/<kind>/<id>/<media_id>`; video responses support byte ranges. The download buttons request 768 KiB ranges and assemble files in the browser to stay under Vercel's per-response size limit; direct downloads stream complete files with attachment headers. Existing data URL images still render. Uploaded HTML5 videos use Plyr 3.8.4 from the official CDN; native controls remain available if the CDN cannot load.
 
 Git history retains uploaded files even after a notice is deleted. Monitor storage growth and GitHub API usage; use object storage for higher traffic or larger videos.

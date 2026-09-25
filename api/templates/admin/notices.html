@@ -60,6 +60,7 @@
                     </div>
 
                     {% include "layout/image_attachments.html" %}
+                    {% include "layout/file_attachments.html" %}
 
                     <div class="flex flex-col gap-3 rounded-xl bg-base-200/60 p-4 sm:flex-row sm:items-center sm:justify-between">
                         <div class="space-y-2">
@@ -128,6 +129,7 @@
 (() => {
     const form = document.getElementById('notice-form');
     const imageAttachments = window.DicoImageAttachments.mount(form);
+    const fileAttachments = window.DicoFileAttachments.mount(form);
     const titleInput = document.getElementById('notice-title');
     const contentInput = document.getElementById('notice-content');
     const titleCount = document.getElementById('notice-title-count');
@@ -448,6 +450,7 @@
         try {
             await imageAttachments.ready();
             await imageAttachments.preflight();
+            await fileAttachments.preflight();
             if (!savedNotice) {
                 const response = await fetch(form.action, {
                     method: 'POST',
@@ -463,6 +466,7 @@
                 savedNotice = data;
             }
             await imageAttachments.uploadAll('notices', savedNotice.notice.id, csrfToken);
+            await fileAttachments.uploadAll('notices', savedNotice.notice.id, csrfToken);
             insertNotice(savedNotice.notice);
             const deliveryText = savedNotice.delivered_count > 0
                 ? ` ${savedNotice.delivered_count}명에게 알림을 보냈습니다.`
@@ -471,6 +475,7 @@
             savedNotice = null;
             form.reset();
             imageAttachments.clear();
+            fileAttachments.clear();
             form.querySelector('[name="send_notification"]').checked = true;
             setPreviewMode(false);
             updateCounters();

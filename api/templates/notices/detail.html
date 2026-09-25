@@ -32,6 +32,9 @@
                 {% if notice.images %}
                 <div class="px-5 pb-6 sm:px-7">{% with images=notice.images, kind="notices", item_id=notice.id %}{% include "layout/attached_images.html" %}{% endwith %}</div>
                 {% endif %}
+                {% if notice.files %}
+                <div class="px-5 pb-6 sm:px-7">{% with files=notice.files, kind="notices", item_id=notice.id %}{% include "layout/attached_files.html" %}{% endwith %}</div>
+                {% endif %}
             </article>
         </div>
     </div>

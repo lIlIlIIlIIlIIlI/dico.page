@@ -1,0 +1,15 @@
+<section class="rounded-xl border border-base-300 bg-base-100 p-3 sm:p-4" data-file-attachments>
+    <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+            <h2 class="text-sm font-semibold">일반 첨부파일 <span class="font-normal text-base-content/50" data-file-count>0/5</span></h2>
+            <p class="mt-1 text-xs text-base-content/55">PDF, ZIP, TXT, CSV, HWP, HWPX, DOCX, XLSX, PPTX · 파일당 20MB 이하</p>
+        </div>
+        <button type="button" class="btn btn-outline btn-sm" data-file-select>파일 선택</button>
+    </div>
+    <div class="mt-3 rounded-lg border-2 border-dashed border-base-300 bg-base-200/30 p-4 text-center text-sm text-base-content/60 outline-none transition focus-visible:border-primary" data-file-dropzone tabindex="0" role="button" aria-label="일반 첨부파일 선택 또는 끌어놓기">
+        파일을 끌어놓거나 클릭해 여러 개를 선택하세요.
+    </div>
+    <input type="file" accept=".pdf,.zip,.txt,.csv,.hwp,.hwpx,.docx,.xlsx,.pptx" multiple class="hidden" data-file-picker>
+    <ul class="mt-3 space-y-2" data-file-list aria-live="polite"></ul>
+    <p class="mt-2 text-xs text-base-content/55" data-file-status role="status" aria-live="polite">파일은 게시글·공지 등록 후 별도로 저장됩니다.</p>
+</section>
