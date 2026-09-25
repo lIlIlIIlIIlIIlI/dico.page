@@ -18,10 +18,24 @@ from ..notifications import (
     delete_notice_sync,
     get_notices_sync,
 )
+from ..media_storage import claim_media_draft_sync, finish_media_draft_sync, release_media_draft_sync
 
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 admin_subscribers = {}
+
+
+def _publish_notice_draft_sync(draft_id, title, content, is_pinned, author_id, nickname):
+    draft = claim_media_draft_sync("notices", draft_id, author_id)
+    if not draft:
+        return None
+    try:
+        notice = create_notice_sync(title, content, is_pinned, author_id, nickname, draft)
+    except Exception:
+        release_media_draft_sync("notices", draft_id)
+        raise
+    finish_media_draft_sync("notices", draft_id)
+    return notice
 
 
 async def publish_admin_event(event_name, payload):
@@ -186,6 +200,8 @@ async def create_notice():
     content = form.get("content", "").strip()
     is_pinned = form.get("is_pinned") == "on"
     send_notification = form.get("send_notification") == "on"
+    draft_value = form.get("media_draft_id", "").strip()
+    draft_id = int(draft_value) if draft_value.isdecimal() and len(draft_value) <= 12 and int(draft_value) > 0 else None
 
 
     if not title or len(title) > 100:
@@ -200,14 +216,17 @@ async def create_notice():
             "message": "내용은 1자 이상 5,000자 이하로 입력해 주세요.",
         }), 400
 
-    notice = await asyncio.to_thread(
-        create_notice_sync,
-        title,
-        content,
-        is_pinned,
-        session["user_id"],
-        session["nickname"],
-    )
+    if draft_value and draft_id is None:
+        return jsonify({"success": False, "message": "임시 공지 정보가 올바르지 않습니다."}), 400
+
+    if draft_id:
+        notice = await asyncio.to_thread(_publish_notice_draft_sync, draft_id, title, content,
+            is_pinned, session["user_id"], session["nickname"])
+        if notice is None:
+            return jsonify({"success": False, "message": "임시 공지를 찾을 수 없습니다. 작성 화면을 다시 열어 주세요."}), 404
+    else:
+        notice = await asyncio.to_thread(create_notice_sync, title, content, is_pinned,
+            session["user_id"], session["nickname"])
 
     delivered_count = 0
 

@@ -9,9 +9,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from pymongo import ReturnDocument
 from quart import Blueprint, Response, abort, jsonify, request, session, url_for
 
-from ...module.database import collection
+from ...module.database import collection, next_id_sync
 from .auth import ensure_database, get_current_user, validate_csrf_token
 
 
@@ -99,9 +100,37 @@ def _commit_blobs(files, message):
 
 
 def _document(kind, item_id):
-    return collection("posts" if kind == "posts" else "notices").find_one(
+    published = collection("posts" if kind == "posts" else "notices").find_one(
         {"id": item_id}, {"_id": 0, "id": 1, "author_id": 1, "images": 1, "files": 1}
     )
+    if published:
+        return published
+    return collection("media_drafts").find_one(
+        {"_id": _draft_key(kind, item_id), "draft_state": "active", "expire_at": {"$gt": datetime.now(timezone.utc)}},
+        {"id": 1, "author_id": 1, "images": 1, "files": 1, "draft_state": 1},
+    )
+
+
+def _draft_key(kind, item_id):
+    return kind + ":" + str(item_id)
+
+
+def claim_media_draft_sync(kind, item_id, user_id):
+    return collection("media_drafts").find_one_and_update({
+        "_id": _draft_key(kind, item_id), "author_id": int(user_id), "draft_state": "active",
+        "expire_at": {"$gt": datetime.now(timezone.utc)},
+    }, {"$set": {"draft_state": "publishing"}}, return_document=ReturnDocument.BEFORE)
+
+
+def release_media_draft_sync(kind, item_id):
+    collection("media_drafts").update_one(
+        {"_id": _draft_key(kind, item_id), "draft_state": "publishing"},
+        {"$set": {"draft_state": "active"}},
+    )
+
+
+def finish_media_draft_sync(kind, item_id):
+    collection("media_drafts").delete_one({"_id": _draft_key(kind, item_id)})
 
 
 async def _write_target(kind, item_id):
@@ -149,16 +178,145 @@ def _folder(kind):
 
 
 def _save_attachment(kind, item_id, media, field="images"):
-    target = collection("posts" if kind == "posts" else "notices")
-    result = target.update_one(
-        {"id": item_id, field + ".id": {"$ne": media["id"]}, field + ".4": {"$exists": False}},
+    drafts = collection("media_drafts")
+    result = drafts.update_one(
+        {"_id": _draft_key(kind, item_id), "draft_state": "active", field + ".id": {"$ne": media["id"]}, field + ".4": {"$exists": False}},
         {"$push": {field: media}},
     )
-    return result.modified_count == 1
+    if result.modified_count:
+        return True
+    return collection("posts" if kind == "posts" else "notices").update_one(
+        {"id": item_id, field + ".id": {"$ne": media["id"]}, field + ".4": {"$exists": False}},
+        {"$push": {field: media}},
+    ).modified_count == 1
 
 
 def _upload_key(kind, item_id, media_id):
     return kind + ":" + str(item_id) + ":" + media_id
+
+
+def _media_paths(kind, item_id, media):
+    prefix = _folder(kind) + "/" + str(item_id) + "/"
+    if media["kind"] == "image":
+        return [prefix + "이미지/" + media["id"] + "." + IMAGE_TYPES[media["mime"]]]
+    directory = "영상/" if media["kind"] == "video" else "첨부파일/"
+    return [prefix + directory + media["id"] + "/" + str(index).zfill(4) + ".part"
+            for index in range(len(media["chunks"]))]
+
+
+def _discard_untracked_media(kind, item_id, media):
+    doc = _document(kind, item_id)
+    if doc and any(item.get("id") == media["id"] for field in ("images", "files") for item in doc.get(field, [])):
+        return
+    _commit_blobs([(path, None) for path in _media_paths(kind, item_id, media)], "Remove incomplete media " + media["id"])
+
+
+def _remove_upload_state(kind, item_id, media_id=None):
+    uploads = collection("media_uploads")
+    if media_id:
+        key = _upload_key(kind, item_id, media_id)
+        uploads.delete_many({"_id": {"$in": [key, "file:" + key]}})
+    else:
+        uploads.delete_many({"_id": {"$regex": r"^(?:file:)?" + re.escape(kind + ":" + str(item_id) + ":")}})
+
+
+def _remove_draft_sync(kind, item_id, author_id=None):
+    query = {"_id": _draft_key(kind, item_id),
+             "draft_state": "active" if author_id is not None else {"$in": ["active", "publishing"]}}
+    if author_id is not None:
+        query["author_id"] = int(author_id)
+    drafts = collection("media_drafts")
+    draft = drafts.find_one(query)
+    if not draft:
+        return False
+    if not collection(kind).find_one({"id": item_id}, {"_id": 1}):
+        paths = [_media_paths(kind, item_id, media) for media in draft.get("images", []) + draft.get("files", [])]
+        flat_paths = [path for group in paths for path in group]
+        if flat_paths:
+            _commit_blobs([(path, None) for path in flat_paths], "Remove draft " + _draft_key(kind, item_id))
+    drafts.delete_one(query)
+    _remove_upload_state(kind, item_id)
+    return True
+
+
+def _remove_draft_media_sync(kind, item_id, media_id, author_id):
+    drafts = collection("media_drafts")
+    query = {"_id": _draft_key(kind, item_id), "author_id": int(author_id), "draft_state": "active"}
+    draft = drafts.find_one(query)
+    if not draft:
+        return False
+    media = next((item for field in ("images", "files") for item in draft.get(field, []) if item["id"] == media_id), None)
+    if media:
+        _commit_blobs([(path, None) for path in _media_paths(kind, item_id, media)], "Remove media " + media_id)
+        field = "images" if media["kind"] in ("image", "video") else "files"
+        drafts.update_one(query, {"$pull": {field: {"id": media_id}}})
+    _remove_upload_state(kind, item_id, media_id)
+    return True
+
+
+def _clean_expired_drafts_sync():
+    stale = collection("media_drafts").find({
+        "draft_state": {"$in": ["active", "publishing"]},
+        "expire_at": {"$lte": datetime.now(timezone.utc)},
+    }).limit(3)
+    for draft in stale:
+        try:
+            _remove_draft_sync(draft["kind"], draft["id"])
+        except MediaStorageError:
+            continue
+
+
+async def _draft_user(kind):
+    if kind not in {"posts", "notices"}:
+        abort(404)
+    await ensure_database()
+    user = await get_current_user() if session.get("user_id") else None
+    if not user:
+        abort(401)
+    if kind == "notices" and user.get("role") != "admin":
+        abort(403)
+    token = request.headers.get("X-CSRF-Token")
+    if not token:
+        form = await request.form
+        token = form.get("csrf_token", "")
+    if not validate_csrf_token({"csrf_token": token}):
+        abort(400)
+    return user
+
+
+@media_bp.post("/api/media/drafts/<kind>")
+async def create_draft(kind):
+    user = await _draft_user(kind)
+    await asyncio.to_thread(_clean_expired_drafts_sync)
+    item_id = await asyncio.to_thread(next_id_sync, kind)
+    await asyncio.to_thread(collection("media_drafts").insert_one, {
+        "_id": _draft_key(kind, item_id), "kind": kind, "id": item_id,
+        "author_id": int(user["id"]), "images": [], "files": [],
+        "draft_state": "active", "expire_at": datetime.now(timezone.utc) + timedelta(hours=24),
+    })
+    return jsonify({"success": True, "id": item_id})
+
+
+@media_bp.post("/api/media/drafts/<kind>/<int:item_id>/cancel")
+async def cancel_draft(kind, item_id):
+    user = await _draft_user(kind)
+    try:
+        removed = await asyncio.to_thread(_remove_draft_sync, kind, item_id, user["id"])
+    except MediaStorageError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 502
+    return jsonify({"success": removed}) if removed else (jsonify({"success": False, "message": "임시 글을 찾을 수 없습니다."}), 404)
+
+
+@media_bp.post("/api/media/drafts/<kind>/<int:item_id>/remove/<media_id>")
+async def remove_draft_media(kind, item_id, media_id):
+    user = await _draft_user(kind)
+    if not MEDIA_ID.fullmatch(media_id):
+        abort(400)
+    try:
+        removed = await asyncio.to_thread(_remove_draft_media_sync, kind, item_id, media_id, user["id"])
+    except MediaStorageError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 502
+    return jsonify({"success": removed}) if removed else (jsonify({"success": False, "message": "임시 글을 찾을 수 없습니다."}), 404)
 
 
 @media_bp.get("/api/media/status")
@@ -205,6 +363,10 @@ async def upload_image(kind, item_id, media_id):
     except MediaStorageError as exc:
         return jsonify({"success": False, "message": str(exc)}), 502
     if not saved:
+        try:
+            await asyncio.to_thread(_discard_untracked_media, kind, item_id, media)
+        except MediaStorageError:
+            pass
         return jsonify({"success": False, "message": "첨부 정보 저장에 실패했습니다."}), 409
     return jsonify({"success": True, "url": url_for("media.serve_media", kind=kind, item_id=item_id, media_id=media_id)})
 
@@ -323,6 +485,10 @@ async def _complete_chunks(kind, item_id, media_id, media_kind):
     except MediaStorageError as exc:
         return jsonify({"success": False, "message": str(exc)}), 502
     if not saved:
+        try:
+            await asyncio.to_thread(_discard_untracked_media, kind, item_id, media)
+        except MediaStorageError:
+            pass
         return jsonify({"success": False, "message": "영상 정보 저장에 실패했습니다."}), 409
     await asyncio.to_thread(uploads.delete_one, {"_id": key})
     return jsonify({"success": True, "url": url_for("media.serve_media", kind=kind, item_id=item_id, media_id=media_id)})
@@ -334,11 +500,13 @@ async def serve_media(kind, item_id, media_id):
         abort(404)
     await ensure_database()
     doc = await asyncio.to_thread(_document, kind, item_id)
+    if doc and doc.get("draft_state") and int(doc["author_id"]) != int(session.get("user_id") or 0):
+        abort(404)
     media = next((item for field in ("images", "files") for item in (doc or {}).get(field, []) if item.get("id") == media_id), None)
     if not media:
         abort(404)
     size = media["size"]
-    headers = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff"}
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, no-store" if doc.get("draft_state") else "public, max-age=3600", "X-Content-Type-Options": "nosniff"}
     download = media["kind"] == "file" or request.args.get("download") == "1"
     if download:
         headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + quote(media.get("name") or "attachment", safe="")

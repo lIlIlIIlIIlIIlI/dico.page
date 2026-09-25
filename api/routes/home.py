@@ -20,6 +20,7 @@ from quart import Blueprint, abort, current_app, jsonify, redirect, render_templ
 
 from .module.auth import ensure_database, login_required, validate_csrf_token
 from .module.notifications import create_notification, get_notices_sync
+from .module.media_storage import claim_media_draft_sync, finish_media_draft_sync, release_media_draft_sync
 from ..module.database import collection, next_id_sync, utc_now
 
 
@@ -231,21 +232,34 @@ def _get_posts_sync(search, category, page, per_page):
     return rows, total, page, total_pages
 
 
-def _create_post_sync(title, content, category, media_url, author_id, author_nickname, images=None):
-    post_id = next_id_sync("posts")
+def _create_post_sync(title, content, category, media_url, author_id, author_nickname, draft=None):
+    post_id = draft["id"] if draft else next_id_sync("posts")
     collection("posts").insert_one({
         "id": post_id,
         "title": title,
         "content": content,
         "category": category,
         "media_url": media_url or None,
-        "images": images or [],
-        "files": [],
+        "images": draft.get("images", []) if draft else [],
+        "files": draft.get("files", []) if draft else [],
         "author_id": int(author_id),
         "author_nickname": author_nickname,
         "views": 0,
         "created_at": utc_now(),
     })
+    return post_id
+
+
+def _publish_post_draft_sync(draft_id, title, content, category, author_id, nickname):
+    draft = claim_media_draft_sync("posts", draft_id, author_id)
+    if not draft:
+        return None
+    try:
+        post_id = _create_post_sync(title, content, category, "", author_id, nickname, draft)
+    except Exception:
+        release_media_draft_sync("posts", draft_id)
+        raise
+    finish_media_draft_sync("posts", draft_id)
     return post_id
 
 
@@ -805,6 +819,8 @@ async def write():
             "content": form.get("content", "").strip(),
             "category": form.get("category", "general"),
         }
+        draft_value = form.get("media_draft_id", "").strip()
+        draft_id = int(draft_value) if draft_value.isdecimal() and len(draft_value) <= 12 and int(draft_value) > 0 else None
 
         if not error and (not values["title"] or len(values["title"]) > 100):
             error = "제목은 1자 이상 100자 이하로 입력해 주세요."
@@ -812,17 +828,19 @@ async def write():
             error = "내용은 1자 이상 10,000자 이하로 입력해 주세요."
         elif not error and values["category"] not in POST_CATEGORIES:
             error = "올바른 게시판 분류를 선택해 주세요."
+        elif not error and draft_value and draft_id is None:
+            error = "임시 글 정보가 올바르지 않습니다."
         if not error:
             await ensure_database()
-            post_id = await asyncio.to_thread(
-                _create_post_sync,
-                values["title"],
-                values["content"],
-                values["category"],
-                "",
-                session["user_id"],
-                session["nickname"],
-            )
+            if draft_id:
+                post_id = await asyncio.to_thread(_publish_post_draft_sync, draft_id,
+                    values["title"], values["content"], values["category"], session["user_id"], session["nickname"])
+                if post_id is None:
+                    error = "임시 글을 찾을 수 없습니다. 작성 화면을 다시 열어 주세요."
+            else:
+                post_id = await asyncio.to_thread(_create_post_sync, values["title"],
+                    values["content"], values["category"], "", session["user_id"], session["nickname"])
+        if not error:
             redirect_url = url_for("home.post_detail", post_id=post_id)
             if wants_json:
                 return jsonify({"success": True, "post_id": post_id, "redirect": redirect_url})

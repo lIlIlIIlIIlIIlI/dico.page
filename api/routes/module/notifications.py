@@ -63,14 +63,14 @@ def get_notice_sync(notice_id):
     return notice
 
 
-def create_notice_sync(title, content, is_pinned, author_id, author_nickname, images=None):
-    notice_id = next_id_sync("notices")
+def create_notice_sync(title, content, is_pinned, author_id, author_nickname, draft=None):
+    notice_id = draft["id"] if draft else next_id_sync("notices")
     notice = {
         "id": notice_id,
         "title": title,
         "content": content,
-        "images": images or [],
-        "files": [],
+        "images": draft.get("images", []) if draft else [],
+        "files": draft.get("files", []) if draft else [],
         "is_pinned": bool(is_pinned),
         "author_id": author_id,
         "author_nickname": author_nickname,
