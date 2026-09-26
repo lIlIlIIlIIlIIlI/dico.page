@@ -31,7 +31,7 @@ const attempts = new Map();
 const chunkUrls = [];
 const completions = [];
 const sandbox = {
-    window: {}, document: {createElement: element}, crypto: webcrypto, AbortController,
+    window: {location: {origin: 'https://dico.page'}}, document: {createElement: element}, crypto: webcrypto, AbortController,
     URL: {createObjectURL: () => 'blob:video', revokeObjectURL() {}},
     fetch: async url => {
         if (url === '/api/media/status') return {ok: true, json: async () => ({configured: true})};

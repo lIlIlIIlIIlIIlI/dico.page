@@ -54,8 +54,17 @@ class FileReader {
 }
 
 const completions = [];
+const content = element('textarea');
+content.value = '본문';
+content.maxLength = 10000;
+content.selectionStart = content.selectionEnd = content.value.length;
+content.setRangeText = function (value, start, end) {
+    this.value = this.value.slice(0, start) + value + this.value.slice(end);
+    this.selectionStart = this.selectionEnd = start + value.length;
+};
 const sandbox = {
-    window: {FileReader}, FileReader, document: {createElement: tag => tag === 'video' ? mediaElement() : tag === 'canvas' ? canvas : element(tag)},
+    window: {FileReader, location: {origin: 'https://dico.page'}}, FileReader,
+    document: {createElement: tag => tag === 'video' ? mediaElement() : tag === 'canvas' ? canvas : element(tag)},
     crypto: webcrypto, AbortController, Blob, setTimeout, clearTimeout,
     URL: {createObjectURL: () => 'blob:clip', revokeObjectURL() {}},
     fetch: async (url, options) => {
@@ -69,7 +78,7 @@ for (const file of ['media-upload-queue.js', 'image-attachments.js']) {
 }
 const uploader = sandbox.window.DicoImageAttachments.mount({
     querySelector: selector => selectors.get(selector), addEventListener() {},
-}, {kind: 'posts', ensureDraft: async () => 17});
+}, {kind: 'posts', ensureDraft: async () => 17, contentInput: content});
 
 picker.files = [{name: 'clip.mp4', type: 'video/mp4', size: 1000,
     slice(start, end) {return {size: end - start};}}];
@@ -78,6 +87,13 @@ picker.listeners.change();
 uploader.ready().then(() => {
     assert.equal(completions.length, 1);
     assert.equal(completions[0].poster, poster);
-    assert.equal(selectors.get('[data-image-list]').children[0].children[0].tagName, 'IMG');
+    const row = selectors.get('[data-image-list]').children[0];
+    assert.equal(row.children[0].tagName, 'IMG');
+    const marker = content.value.match(/#\[([0-9a-f-]{36})\]/)?.[0];
+    assert(marker);
+    assert.equal(uploader.mediaForToken(marker).name, 'clip.mp4');
+    assert.equal(uploader.mediaForPreviewHeading(marker.slice(1)).name, 'clip.mp4');
+    assert.equal(row.children[1].children[1].href, 'https://dico.page/media/posts/17/' + marker.slice(2, -1));
+    assert.equal(content.value.includes('#[clip.mp4]'), false);
     console.log('Video preview frame is uploaded with the video and shown in the picker.');
 }).catch(error => {console.error(error); process.exitCode = 1;});

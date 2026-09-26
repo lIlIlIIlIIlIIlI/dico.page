@@ -516,10 +516,17 @@ def _video_for_line(line, videos):
     if not candidate.startswith("#[") or not candidate.endswith("]"):
         return None
     return next((video for video in videos if video.get("kind") == "video"
-                 and candidate == "#[" + video.get("name", "") + "]"), None)
+                 and (candidate == "#[" + video.get("id", "") + "]"
+                      or candidate == "#[" + video.get("name", "") + "]")), None)
 
 
 def _photo_for_line(line, attachments):
+    candidate = line.strip()
+    if candidate.startswith("#[") and candidate.endswith("]"):
+        media_id = candidate[2:-1]
+        if re.fullmatch(r"[0-9a-f-]{36}", media_id):
+            return next((photo for photo in attachments if photo.get("kind") == "image"
+                         and photo.get("id") == media_id), None)
     match = re.fullmatch(r"!\[.*\]\(dico-image:([0-9a-f-]{36})\)", line.strip())
     if not match:
         return None
