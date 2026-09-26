@@ -30,7 +30,7 @@ Object.defineProperty(picker, 'value', {
 
 const requests = [];
 const sandbox = {
-    window: {location: {origin: 'https://dico.page'}}, document: {createElement: element}, crypto: webcrypto, AbortController,
+    window: {}, document: {createElement: element}, crypto: webcrypto, AbortController,
     URL: {createObjectURL: () => 'blob:preview', revokeObjectURL() {}},
     fetch: async url => {
         requests.push(url);

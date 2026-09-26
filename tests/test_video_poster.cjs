@@ -63,7 +63,7 @@ content.setRangeText = function (value, start, end) {
     this.selectionStart = this.selectionEnd = start + value.length;
 };
 const sandbox = {
-    window: {FileReader, location: {origin: 'https://dico.page'}}, FileReader,
+    window: {FileReader}, FileReader,
     document: {createElement: tag => tag === 'video' ? mediaElement() : tag === 'canvas' ? canvas : element(tag)},
     crypto: webcrypto, AbortController, Blob, setTimeout, clearTimeout,
     URL: {createObjectURL: () => 'blob:clip', revokeObjectURL() {}},
@@ -93,7 +93,8 @@ uploader.ready().then(() => {
     assert(marker);
     assert.equal(uploader.mediaForToken(marker).name, 'clip.mp4');
     assert.equal(uploader.mediaForPreviewHeading(marker.slice(1)).name, 'clip.mp4');
-    assert.equal(row.children[1].children[1].href, 'https://dico.page/media/posts/17/' + marker.slice(2, -1));
+    assert.equal(row.children[1].children.length, 1);
+    assert.equal(row.children[1].children[0].textContent, 'clip.mp4');
     assert.equal(content.value.includes('#[clip.mp4]'), false);
     console.log('Video preview frame is uploaded with the video and shown in the picker.');
 }).catch(error => {console.error(error); process.exitCode = 1;});
