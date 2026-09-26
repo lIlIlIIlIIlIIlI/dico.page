@@ -457,7 +457,8 @@ async def media_upload_status(kind, item_id, media_kind, media_id):
     doc, problem = await _write_target(kind, item_id)
     if problem:
         return problem
-    fields = {"image": "images", "video": "images", "file": "files"}
+    fields = {"image": "images", "images": "images", "video": "images", "videos": "images",
+              "file": "files", "files": "files"}
     if media_kind not in fields or not MEDIA_ID.fullmatch(media_id):
         abort(404)
     field = fields[media_kind]
@@ -465,7 +466,7 @@ async def media_upload_status(kind, item_id, media_kind, media_id):
     if media:
         return jsonify({"success": True, "complete": True, "uploaded_chunks": [],
                         "sha256": media.get("sha256")})
-    key = ("file:" if media_kind == "file" else "") + _upload_key(kind, item_id, media_id)
+    key = ("file:" if field == "files" else "") + _upload_key(kind, item_id, media_id)
     state = await asyncio.to_thread(collection("media_uploads").find_one, {"_id": key})
     if state and int(state.get("user_id", -1)) != int(session["user_id"]):
         abort(404)

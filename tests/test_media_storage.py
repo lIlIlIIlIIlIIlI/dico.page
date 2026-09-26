@@ -9,6 +9,31 @@ from api.routes.module import media_storage as media
 
 
 class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_upload_status_accepts_the_plural_routes_used_by_the_picker(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        checked_keys = []
+
+        async def writable(kind, item_id):
+            return {"images": [], "files": []}, None
+
+        class Uploads:
+            def find_one(self, query):
+                checked_keys.append(query["_id"])
+                return None
+
+        client = app.test_client()
+        with patch.object(media, "_write_target", writable), patch.object(media, "collection", return_value=Uploads()):
+            for route in ("images", "videos", "files"):
+                response = await client.get("/api/media/posts/34/" + route + "/" + media_id + "/status")
+                self.assertEqual(response.status_code, 200, route)
+                self.assertFalse((await response.get_json())["complete"])
+
+        self.assertEqual(checked_keys, [
+            "posts:34:" + media_id,
+            "posts:34:" + media_id,
+            "file:posts:34:" + media_id,
+        ])
+
     async def test_outdated_upload_script_receives_reload_instruction(self):
         media_id = "11111111-1111-4111-8111-111111111111"
 
