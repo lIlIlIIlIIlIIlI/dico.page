@@ -37,7 +37,7 @@ content.setRangeText = function (text, start, end) {
 };
 let removedOnServer = false;
 const sandbox = {
-    window: {}, document: {createElement: element}, crypto: webcrypto, AbortController,
+    window: {location: {origin: 'https://dico.page'}}, document: {createElement: element}, crypto: webcrypto, AbortController,
     URL: {createObjectURL: () => 'blob:picture', revokeObjectURL() {}},
     fetch: async url => {
         if (url.includes('/remove/')) removedOnServer = true;
@@ -58,15 +58,18 @@ picker.listeners.change();
 
 (async () => {
     await uploader.ready();
-    const marker = content.value.match(/!\[picture\.png\]\(dico-image:([0-9a-f-]{36})\)/)?.[0];
+    const marker = content.value.match(/#\[([0-9a-f-]{36})\]/)?.[0];
     assert(marker);
     assert(content.value.indexOf('앞 문장') < content.value.indexOf(marker));
     assert(content.value.indexOf(marker) < content.value.indexOf('뒤 문장'));
     assert.equal(uploader.mediaForToken(marker).name, 'picture.png');
     assert(uploader.previewText().includes('#[DICO-IMAGE-' + uploader.mediaForToken(marker).id + ']'));
     assert.equal(uploader.mediaForPreviewHeading('[DICO-IMAGE-' + uploader.mediaForToken(marker).id + ']').name, 'picture.png');
+    assert.equal(uploader.mediaForPreviewHeading(marker.slice(1)).name, 'picture.png');
 
     assert.equal(selectors.get('[data-image-list]').children.length, 1);
+    const row = selectors.get('[data-image-list]').children[0];
+    assert.equal(row.children[1].children[1].href, 'https://dico.page/media/posts/17/' + uploader.mediaForToken(marker).id);
     let buttons = selectors.get('[data-image-list]').children[0].children.filter(child => child.tagName === 'BUTTON');
     assert.deepEqual(buttons.map(button => button.textContent), ['본문에 삽입', '삭제']);
     content.selectionStart = content.selectionEnd = content.value.length;

@@ -131,24 +131,24 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
 
         function videoForToken(line) {
             return files.find(entry => !entry.removed && videoTypes.has(entry.file.type)
-                && line.trim() === '#[' + entry.id + ']');
+                && (line.trim() === '#[' + entry.id + ']' || line.trim() === '#[' + entry.name + ']'));
         }
 
         function markerFor(entry) {
-            return videoTypes.has(entry.file.type)
-                ? '#[' + entry.id + ']'
-                : '![' + entry.name + '](dico-image:' + entry.id + ')';
+            return '#[' + entry.id + ']';
         }
 
         function mediaForToken(line) {
-            return files.find(entry => !entry.removed && line.trim() === markerFor(entry));
+            const candidate = line.trim();
+            return files.find(entry => !entry.removed && (candidate === markerFor(entry)
+                || (imageTypes.has(entry.file.type)
+                    && candidate === '![' + entry.name + '](dico-image:' + entry.id + ')')));
         }
 
         function mediaForPreviewHeading(text) {
-            const video = videoForToken('#' + text);
-            if (video) return video;
             const match = /^\[DICO-IMAGE-([0-9a-f-]{36})\]$/.exec(text);
-            return match && files.find(entry => !entry.removed && imageTypes.has(entry.file.type) && entry.id === match[1]);
+            if (match) return files.find(entry => !entry.removed && imageTypes.has(entry.file.type) && entry.id === match[1]);
+            return mediaForToken('#' + text);
         }
 
         function previewText() {
@@ -223,7 +223,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                 filename.textContent = entry.name;
                 filename.title = entry.name;
                 label.appendChild(filename);
-                if (entry.uploaded && videoTypes.has(entry.file.type) && options.kind && targetId) {
+                if (entry.uploaded && options.kind && targetId) {
                     const link = document.createElement('a');
                     link.href = window.location.origin + '/media/' + options.kind + '/' + targetId + '/' + entry.id;
                     link.className = 'block break-all text-xs text-primary hover:underline';
@@ -231,6 +231,10 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                     link.target = '_blank';
                     link.rel = 'noopener noreferrer';
                     label.appendChild(link);
+                    const code = document.createElement('code');
+                    code.className = 'block break-all text-xs text-base-content/60';
+                    code.textContent = '[' + link.href + '](' + link.href + ') #[' + entry.id + ']';
+                    label.appendChild(code);
                 }
                 const state = document.createElement('span');
                 state.className = 'shrink-0 text-xs text-base-content/55';
