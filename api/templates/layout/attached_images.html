@@ -1,4 +1,4 @@
-{% set photos = images | rejectattr('kind', 'equalto', 'video') | list %}
+{% set photos = images | rejectattr('kind', 'equalto', 'video') | rejectattr('id', 'in', inline_photo_ids | default([])) | list %}
 {% if photos %}
 <section class="mt-8 border-t border-base-200 pt-6" aria-label="첨부 사진">
     <h2 class="mb-5 text-base font-semibold">사진 {{ photos | length }}개</h2>

@@ -186,6 +186,22 @@
     .dico-media-caption span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dico-media-caption a { flex-shrink: 0; color: var(--color-primary); }
     .dico-markdown figure.dico-media-attachment .dico-media-caption { display: flex; }
+    .dico-markdown figure.dico-inline-photo {
+        display: block;
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        margin: 1.25rem 0;
+    }
+    .dico-markdown figure.dico-inline-photo img {
+        display: block;
+        max-width: 100%;
+        height: auto;
+        margin: 0 auto;
+        border-radius: 0;
+    }
+    .dico-markdown figure.dico-inline-photo figcaption { display: flex; }
     .dico-media-instagram-frame {
         width: 100%;
         max-width: 680px;

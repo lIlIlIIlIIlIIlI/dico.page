@@ -1,7 +1,7 @@
 import unittest
 
 from api.index import app
-from api.routes.home import _inline_video_ids, _render_markdown
+from api.routes.home import _inline_photo_ids, _inline_video_ids, _render_markdown
 
 
 class InlineVideoTests(unittest.IsolatedAsyncioTestCase):
@@ -38,6 +38,44 @@ class InlineVideoTests(unittest.IsolatedAsyncioTestCase):
             rendered = _render_markdown("#[x<y&z.mp4]", [video], "posts", 12)
             self.assertIn("x&lt;y&amp;z.mp4", rendered)
             self.assertNotIn("<y&z", rendered)
+
+    async def test_photo_marker_renders_at_its_line_without_duplicate_gallery(self):
+        photo = {"id": "11111111-1111-4111-8111-111111111111", "kind": "image", "name": "x<y].jpg"}
+        other = {"id": "22222222-2222-4222-8222-222222222222", "kind": "image", "name": "other.png"}
+        marker = "![" + photo["name"] + "](dico-image:" + photo["id"] + ")"
+        content = "앞의 글\n" + marker + "\n뒤의 글"
+        async with app.test_request_context("/posts/12"):
+            rendered = _render_markdown(content, [photo, other], "posts", 12)
+            self.assertLess(rendered.index("앞의 글"), rendered.index("<img"))
+            self.assertLess(rendered.index("<img"), rendered.index("뒤의 글"))
+            self.assertIn("/media/posts/12/" + photo["id"], rendered)
+            self.assertIn("x&lt;y].jpg", rendered)
+            self.assertEqual(_inline_photo_ids(content, [photo, other]), {photo["id"]})
+            template = app.jinja_env.get_template("layout/attached_images.html")
+            gallery = await template.render_async(images=[photo, other], kind="posts", item_id=12,
+                                                  inline_photo_ids={photo["id"]})
+            self.assertNotIn(photo["id"], gallery)
+            self.assertIn(other["id"], gallery)
+
+    async def test_photo_marker_in_code_block_stays_text(self):
+        photo = {"id": "11111111-1111-4111-8111-111111111111", "kind": "image", "name": "picture.png"}
+        marker = "![picture.png](dico-image:" + photo["id"] + ")"
+        content = "```text\n" + marker + "\n```"
+        async with app.test_request_context("/notices/4"):
+            self.assertEqual(_inline_photo_ids(content, [photo]), set())
+            self.assertNotIn("/media/notices/4/" + photo["id"], _render_markdown(content, [photo], "notices", 4))
+
+    async def test_notice_with_inline_photo_has_no_second_photo_section(self):
+        photo = {"id": "11111111-1111-4111-8111-111111111111", "kind": "image", "name": "photo.png"}
+        content = "알림\n\n![photo.png](dico-image:" + photo["id"] + ")"
+        async with app.test_request_context("/notices/4"):
+            notice = {"id": 4, "title": "공지", "content": content, "images": [photo], "files": [],
+                      "is_pinned": False, "author_nickname": "관리자", "created_at": "2026-09-25T12:00:00",
+                      "inline_video_ids": set(), "inline_photo_ids": _inline_photo_ids(content, [photo]),
+                      "content_html": _render_markdown(content, [photo], "notices", 4)}
+            page = await app.jinja_env.get_template("notices/detail.html").render_async(notice=notice, current_user=None)
+            self.assertEqual(page.count('src="/media/notices/4/' + photo["id"] + '"'), 1)
+            self.assertNotIn('aria-label="첨부 사진"', page)
 
 
 if __name__ == "__main__":

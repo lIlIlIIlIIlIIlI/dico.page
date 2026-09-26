@@ -283,6 +283,19 @@
     }
 
     function createMediaElement(info) {
+        if (info.type === 'image-attachment') {
+            const figure = document.createElement('figure');
+            figure.className = 'dico-inline-photo min-w-0 overflow-hidden rounded-xl border border-base-200 bg-base-200/30';
+            const image = document.createElement('img');
+            image.src = info.src;
+            image.alt = info.name;
+            image.className = 'max-h-[840px] w-full object-contain';
+            const caption = document.createElement('figcaption');
+            caption.className = 'px-4 py-3 text-sm text-base-content/70';
+            caption.textContent = info.name;
+            figure.append(image, caption);
+            return figure;
+        }
         const wrapper = document.createElement('div');
         wrapper.className = 'dico-media';
 
@@ -360,9 +373,9 @@
             let candidate = line.trim();
             if (candidate.startsWith('<') && candidate.endsWith('>')) candidate = candidate.slice(1, -1);
 
-            const attached = !openedFence && imageAttachments.videoForToken(candidate);
+            const attached = !openedFence && imageAttachments.mediaForToken(candidate);
             const info = attached
-                ? {type: 'attachment', src: attached.previewUrl, name: attached.name}
+                ? {type: attached.file.type.startsWith('image/') ? 'image-attachment' : 'attachment', src: attached.previewUrl, name: attached.name}
                 : getMediaInfo(candidate);
             if (!info || openedFence) return [line];
 
@@ -397,7 +410,7 @@
         preview.innerHTML = '<div class="flex min-h-40 items-center justify-center"><span class="loading loading-spinner loading-sm"></span></div>';
         const body = new FormData();
         body.append('csrf_token', csrfToken);
-        body.append('content', contentInput.value);
+        body.append('content', imageAttachments.previewText());
 
         try {
             const response = await fetch(previewUrl, {
@@ -412,9 +425,9 @@
             }
             preview.innerHTML = data.html || '<p class="text-base-content/45">미리볼 내용이 없습니다.</p>';
             for (const heading of preview.querySelectorAll('h1')) {
-                const attached = imageAttachments.videoForToken('#' + heading.textContent.trim());
-                if (attached && contentInput.value.split(/\r?\n/).some(line => line.trim() === '#[' + attached.name + ']')) {
-                    heading.replaceWith(createMediaElement({type: 'attachment', src: attached.previewUrl, name: attached.name}));
+                const attached = imageAttachments.mediaForPreviewHeading(heading.textContent.trim());
+                if (attached) {
+                    heading.replaceWith(createMediaElement({type: attached.file.type.startsWith('image/') ? 'image-attachment' : 'attachment', src: attached.previewUrl, name: attached.name}));
                 }
             }
             window.DicoPlyr?.apply();

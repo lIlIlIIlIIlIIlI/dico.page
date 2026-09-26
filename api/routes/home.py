@@ -519,6 +519,14 @@ def _video_for_line(line, videos):
                  and candidate == "#[" + video.get("name", "") + "]"), None)
 
 
+def _photo_for_line(line, attachments):
+    match = re.fullmatch(r"!\[.*\]\(dico-image:([0-9a-f-]{36})\)", line.strip())
+    if not match:
+        return None
+    return next((photo for photo in attachments if photo.get("kind") == "image"
+                 and photo.get("id") == match.group(1)), None)
+
+
 def _render_inline_video(video, kind, item_id):
     source = html.escape(url_for("media.serve_media", kind=kind, item_id=item_id, media_id=video["id"]), quote=True)
     download = html.escape(url_for("media.serve_media", kind=kind, item_id=item_id,
@@ -528,6 +536,20 @@ def _render_inline_video(video, kind, item_id):
         '<figure class="dico-media dico-media-attachment">'
         f'<video class="dico-media-frame" src="{source}" controls preload="metadata" playsinline></video>'
         '<figcaption class="dico-media-caption">'
+        f'<span>{name}</span><a href="{download}" download="{name}">다운로드</a>'
+        '</figcaption></figure>'
+    )
+
+
+def _render_inline_photo(photo, kind, item_id):
+    source = html.escape(url_for("media.serve_media", kind=kind, item_id=item_id, media_id=photo["id"]), quote=True)
+    download = html.escape(url_for("media.serve_media", kind=kind, item_id=item_id,
+                                    media_id=photo["id"], download=1), quote=True)
+    name = html.escape(photo.get("name", "사진"), quote=True)
+    return (
+        '<figure class="dico-inline-photo min-w-0 overflow-hidden rounded-xl border border-base-200 bg-base-200/30">'
+        f'<img src="{source}" alt="{name}" loading="lazy" class="max-h-[840px] w-full object-contain">'
+        '<figcaption class="flex min-w-0 items-center justify-between gap-3 px-4 py-3 text-sm text-base-content/70">'
         f'<span>{name}</span><a href="{download}" download="{name}">다운로드</a>'
         '</figcaption></figure>'
     )
@@ -551,6 +573,24 @@ def _inline_video_ids(value, videos):
     return selected
 
 
+def _inline_photo_ids(value, attachments):
+    selected = set()
+    fence_marker = None
+    for line in str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if not fence_marker and _single_line_code_fence(line):
+            continue
+        fence = re.match(r"^\s*(```|~~~)", line)
+        if fence:
+            marker = fence.group(1)
+            fence_marker = None if fence_marker == marker else marker
+            continue
+        if not fence_marker:
+            photo = _photo_for_line(line, attachments)
+            if photo:
+                selected.add(photo["id"])
+    return selected
+
+
 def _single_line_code_fence(line):
     """Discord처럼 ```내용``` 한 줄 표기도 코드 블록으로 인식합니다."""
     match = re.fullmatch(r"\s*(`{3,}|~{3,})(.*?)\1\s*", line)
@@ -559,7 +599,7 @@ def _single_line_code_fence(line):
     return match.group(1), match.group(2).strip()
 
 
-def _is_markdown_block_start(line):
+def _is_markdown_block_start(line, attachments=()):
     stripped = line.strip()
     if not stripped:
         return True
@@ -573,7 +613,7 @@ def _is_markdown_block_start(line):
         return True
     if re.match(r"^\s*[-+*]\s+", line) or re.match(r"^\s*\d+[.)]\s+", line):
         return True
-    return _standalone_media(line) is not None
+    return _standalone_media(line) is not None or _video_for_line(line, attachments) is not None or _photo_for_line(line, attachments) is not None
 
 
 def _render_markdown_fallback(value, videos=(), kind=None, item_id=None):
@@ -615,6 +655,12 @@ def _render_markdown_fallback(value, videos=(), kind=None, item_id=None):
         video = _video_for_line(line, videos) if kind and item_id else None
         if video:
             output.append(_render_inline_video(video, kind, item_id))
+            index += 1
+            continue
+
+        photo = _photo_for_line(line, videos) if kind and item_id else None
+        if photo:
+            output.append(_render_inline_photo(photo, kind, item_id))
             index += 1
             continue
 
@@ -664,7 +710,7 @@ def _render_markdown_fallback(value, videos=(), kind=None, item_id=None):
 
         paragraph = [line]
         index += 1
-        while index < len(lines) and not _is_markdown_block_start(lines[index]):
+        while index < len(lines) and not _is_markdown_block_start(lines[index], videos):
             paragraph.append(lines[index])
             index += 1
         output.append(
@@ -693,9 +739,12 @@ def _prepare_markdown_media(value, videos=(), kind=None, item_id=None):
             continue
 
         video = _video_for_line(line, videos) if not fence_marker and kind and item_id else None
-        media = None if fence_marker or video else _standalone_media(line)
+        photo = _photo_for_line(line, videos) if not fence_marker and kind and item_id else None
+        media = None if fence_marker or video or photo else _standalone_media(line)
         if video:
             output.extend(("", _render_inline_video(video, kind, item_id), ""))
+        elif photo:
+            output.extend(("", _render_inline_photo(photo, kind, item_id), ""))
         elif media:
             output.extend(("", _render_media_block(*media), ""))
         else:
@@ -739,7 +788,7 @@ def _render_markdown(value, videos=(), kind=None, item_id=None):
     })
     allowed_attributes = {
         "a": ("href", "title", "target", "rel", "download"),
-        "img": ("src", "alt", "title", "loading"),
+        "img": ("src", "alt", "title", "loading", "class"),
         "code": ("class",),
         "div": ("class",),
         "figure": ("class",),
@@ -969,6 +1018,7 @@ async def post_detail(post_id):
     post["media_kind"], post["media_src"] = _get_media_info(post.get("media_url"))
     post["content_html"] = _render_markdown(post["content"], post.get("images", []), "posts", post_id)
     post["inline_video_ids"] = _inline_video_ids(post["content"], post.get("images", []))
+    post["inline_photo_ids"] = _inline_photo_ids(post["content"], post.get("images", []))
     return await render_template(
         "home/detail.html",
         post=post,

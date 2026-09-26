@@ -36,8 +36,8 @@
                     {% with images=notice.images | default([]), kind="notices", item_id=notice.id, inline_video_ids=notice.inline_video_ids %}{% include "layout/attached_videos.html" %}{% endwith %}
                     <div class="markdown-body dico-markdown min-h-64">{{ notice.content_html | default(notice.content) | safe }}</div>
                 </div>
-                {% if notice.images | default([]) | rejectattr('kind', 'equalto', 'video') | list %}
-                <div class="px-5 pb-6 sm:px-7">{% with images=notice.images, kind="notices", item_id=notice.id %}{% include "layout/attached_images.html" %}{% endwith %}</div>
+                {% if notice.images | default([]) | rejectattr('kind', 'equalto', 'video') | rejectattr('id', 'in', notice.inline_photo_ids) | list %}
+                <div class="px-5 pb-6 sm:px-7">{% with images=notice.images, kind="notices", item_id=notice.id, inline_photo_ids=notice.inline_photo_ids %}{% include "layout/attached_images.html" %}{% endwith %}</div>
                 {% endif %}
                 {% if notice.files %}
                 <div class="px-5 pb-6 sm:px-7">{% with files=notice.files, kind="notices", item_id=notice.id %}{% include "layout/attached_files.html" %}{% endwith %}</div>
