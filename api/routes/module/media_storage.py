@@ -1,15 +1,20 @@
 import asyncio
 import base64
 import binascii
+import hashlib
 import math
 import os
+import random
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from functools import lru_cache
 from urllib.parse import quote
 
 import httpx
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from quart import Blueprint, Response, abort, jsonify, request, session, url_for
 
 from ...module.database import collection, next_id_sync
@@ -19,12 +24,15 @@ from .auth import ensure_database, get_current_user, validate_csrf_token
 media_bp = Blueprint("media", __name__)
 REPOSITORY = "dico-page/postimage"
 CHUNK_BYTES = 768 * 1024
-VIDEO_CHUNK_BYTES = 4 * 1024 * 1024
+WIRE_CHUNK_BYTES = 4 * 1024 * 1024
+IMAGE_CHUNK_BYTES = 5 * 1024 * 1024
+VIDEO_CHUNK_BYTES = 50 * 1024 * 1024
 POSTER_BYTES = 128 * 1024
 PLAYBACK_READ_CONCURRENCY = 4
 MAX_PLAYBACK_RANGE_BYTES = 200 * 1024 * 1024
 OPEN_PLAYBACK_RANGE_BYTES = 10 * 1024 * 1024
 MAX_VIDEO_BYTES = 10 * 1024 ** 3
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_FILE_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENTS = 5
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
@@ -40,7 +48,7 @@ class MediaStorageError(Exception):
 class MediaRateLimitError(MediaStorageError):
     def __init__(self, retry_after):
         super().__init__("GitHub 요청 제한으로 잠시 대기하고 있습니다.")
-        self.retry_after = retry_after
+        self.retry_after = float(retry_after)
 
 
 @lru_cache(maxsize=1)
@@ -77,12 +85,18 @@ def _github(method, endpoint, payload=None, raw=False):
                 reset = exc.response.headers.get("x-ratelimit-reset", "")
                 try:
                     if retry:
-                        delay = int(retry)
+                        try:
+                            delay = float(retry)
+                        except ValueError:
+                            retry_at = parsedate_to_datetime(retry)
+                            if retry_at.tzinfo is None:
+                                retry_at = retry_at.replace(tzinfo=timezone.utc)
+                            delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
                     elif reset and exc.response.headers.get("x-ratelimit-remaining") == "0":
                         delay = max(60, int(reset) - int(datetime.now(timezone.utc).timestamp()))
                     else:
                         delay = 60
-                except ValueError:
+                except (ValueError, TypeError, OverflowError):
                     delay = 60
                 raise MediaRateLimitError(min(3600, max(1, delay))) from exc
         if exc.response.status_code in (401, 403):
@@ -103,7 +117,41 @@ def _blob(data):
     return result["sha"]
 
 
-@lru_cache(maxsize=32)
+def _queued_blob(data):
+    """Write blobs through a Mongo-backed, cross-instance serial queue."""
+    locks = collection("media_github_upload_queue")
+    now = datetime.now(timezone.utc)
+    epoch = datetime.fromtimestamp(0, timezone.utc)
+    try:
+        locks.update_one({"_id": "github-blob"}, {"$setOnInsert": {
+            "lease_until": epoch, "next_allowed_at": epoch,
+        }}, upsert=True)
+    except DuplicateKeyError:
+        pass
+    lease_id = uuid.uuid4().hex
+    lock = locks.find_one_and_update({
+        "_id": "github-blob", "lease_until": {"$lte": now}, "next_allowed_at": {"$lte": now},
+    }, {"$set": {"lease_id": lease_id, "lease_until": now + timedelta(seconds=120)}})
+    if not lock:
+        state = locks.find_one({"_id": "github-blob"}) or {}
+        due = max(state.get("lease_until", now), state.get("next_allowed_at", now))
+        wait = max(1.0, (due - now).total_seconds())
+        raise MediaRateLimitError(min(3600, wait))
+    delay = random.uniform(1.0, 1.5)
+    try:
+        return _blob(data)
+    except MediaRateLimitError as exc:
+        delay = max(delay, exc.retry_after)
+        raise
+    finally:
+        finished = datetime.now(timezone.utc)
+        locks.update_one({"_id": "github-blob", "lease_id": lease_id}, {"$set": {
+            "lease_until": finished,
+            "next_allowed_at": finished + timedelta(seconds=delay),
+        }, "$unset": {"lease_id": ""}})
+
+
+@lru_cache(maxsize=2)
 def _read_blob(sha):
     if not re.fullmatch(r"[0-9a-f]{40}", str(sha)):
         raise MediaStorageError("미디어 정보가 올바르지 않습니다.")
@@ -128,6 +176,8 @@ def _commit_blobs(files, message):
         try:
             _github("PATCH", "/git/refs/heads/main", {"sha": commit["sha"], "force": False})
             return
+        except MediaRateLimitError:
+            raise
         except MediaStorageError:
             if attempt == 2:
                 raise
@@ -165,6 +215,7 @@ def release_media_draft_sync(kind, item_id):
 
 def finish_media_draft_sync(kind, item_id):
     collection("media_drafts").delete_one({"_id": _draft_key(kind, item_id)})
+    _remove_upload_state(kind, item_id)
 
 
 async def _write_target(kind, item_id):
@@ -246,6 +297,9 @@ def _upload_key(kind, item_id, media_id):
 def _media_paths(kind, item_id, media):
     prefix = _folder(kind) + "/" + str(item_id) + "/"
     if media["kind"] == "image":
+        if media.get("chunks"):
+            return [prefix + "이미지/" + media["id"] + "/" + str(index).zfill(4) + ".part"
+                    for index in range(len(media["chunks"]))]
         return [prefix + "이미지/" + media["id"] + "." + IMAGE_TYPES[media["mime"]]]
     directory = "영상/" if media["kind"] == "video" else "첨부파일/"
     paths = [prefix + directory + media["id"] + "/" + str(index).zfill(4) + ".part"
@@ -264,11 +318,16 @@ def _discard_untracked_media(kind, item_id, media):
 
 def _remove_upload_state(kind, item_id, media_id=None):
     uploads = collection("media_uploads")
+    staged = collection("media_upload_parts")
     if media_id:
         key = _upload_key(kind, item_id, media_id)
-        uploads.delete_many({"_id": {"$in": [key, "file:" + key]}})
+        keys = [key, "file:" + key]
+        uploads.delete_many({"_id": {"$in": keys}})
+        staged.delete_many({"upload_id": {"$in": keys}})
     else:
-        uploads.delete_many({"_id": {"$regex": r"^(?:file:)?" + re.escape(kind + ":" + str(item_id) + ":")}})
+        pattern = r"^(?:file:)?" + re.escape(kind + ":" + str(item_id) + ":")
+        uploads.delete_many({"_id": {"$regex": pattern}})
+        staged.delete_many({"upload_id": {"$regex": pattern}})
 
 
 def _remove_draft_sync(kind, item_id, author_id=None):
@@ -348,6 +407,18 @@ async def create_draft(kind):
     return jsonify({"success": True, "id": item_id})
 
 
+@media_bp.post("/api/media/drafts/<kind>/<int:item_id>/resume")
+async def resume_draft(kind, item_id):
+    user = await _draft_user(kind)
+    result = await asyncio.to_thread(collection("media_drafts").update_one, {
+        "_id": _draft_key(kind, item_id), "author_id": int(user["id"]),
+        "draft_state": "active", "expire_at": {"$gt": datetime.now(timezone.utc)},
+    }, {"$set": {"expire_at": datetime.now(timezone.utc) + timedelta(hours=24)}})
+    if not result.matched_count:
+        return jsonify({"success": False, "message": "이어올릴 임시 글이 만료되었습니다."}), 404
+    return jsonify({"success": True, "id": item_id})
+
+
 @media_bp.post("/api/media/drafts/<kind>/<int:item_id>/cancel")
 async def cancel_draft(kind, item_id):
     user = await _draft_user(kind)
@@ -381,6 +452,34 @@ async def media_status():
     return jsonify({"success": True, "configured": True})
 
 
+@media_bp.get("/api/media/<kind>/<int:item_id>/<media_kind>/<media_id>/status")
+async def media_upload_status(kind, item_id, media_kind, media_id):
+    doc, problem = await _write_target(kind, item_id)
+    if problem:
+        return problem
+    fields = {"image": "images", "video": "images", "file": "files"}
+    if media_kind not in fields or not MEDIA_ID.fullmatch(media_id):
+        abort(404)
+    field = fields[media_kind]
+    media = next((item for item in doc.get(field, []) if item.get("id") == media_id), None)
+    if media:
+        return jsonify({"success": True, "complete": True, "uploaded_chunks": [],
+                        "sha256": media.get("sha256")})
+    key = ("file:" if media_kind == "file" else "") + _upload_key(kind, item_id, media_id)
+    state = await asyncio.to_thread(collection("media_uploads").find_one, {"_id": key})
+    if state and int(state.get("user_id", -1)) != int(session["user_id"]):
+        abort(404)
+    return jsonify({
+        "success": True, "complete": False,
+        "uploaded_chunks": sorted((state or {}).get("uploaded_chunks", [])),
+        "chunk_count": (state or {}).get("chunk_count", 0),
+        "chunk_size": (state or {}).get("chunk_size", 0),
+        "mime_type": (state or {}).get("mime_type"),
+        "total_size": (state or {}).get("total_size", 0),
+        "sha256": (state or {}).get("sha256"),
+    })
+
+
 @media_bp.post("/api/media/<kind>/<int:item_id>/images/<media_id>")
 async def upload_image(kind, item_id, media_id):
     doc, problem = await _write_target(kind, item_id)
@@ -407,10 +506,12 @@ async def upload_image(kind, item_id, media_id):
         return jsonify({"success": False, "message": "첨부는 최대 5개까지 가능합니다."}), 400
     path = _folder(kind) + "/" + str(item_id) + "/이미지/" + media_id + "." + IMAGE_TYPES[mime]
     try:
-        sha = await asyncio.to_thread(_blob, data)
+        sha = await asyncio.to_thread(_queued_blob, data)
         await asyncio.to_thread(_commit_blobs, [(path, sha)], "Upload " + path)
         media = {"id": media_id, "name": name, "kind": "image", "mime": mime, "size": len(data), "sha": sha}
         saved = await asyncio.to_thread(_save_attachment, kind, item_id, media)
+    except MediaRateLimitError as exc:
+        return jsonify({"success": False, "message": str(exc), "retry_after": exc.retry_after}), 429, {"Retry-After": str(math.ceil(exc.retry_after))}
     except MediaStorageError as exc:
         return jsonify({"success": False, "message": str(exc)}), 502
     if not saved:
@@ -420,6 +521,16 @@ async def upload_image(kind, item_id, media_id):
             pass
         return jsonify({"success": False, "message": "첨부 정보 저장에 실패했습니다."}), 409
     return jsonify({"success": True, "url": url_for("media.serve_media", kind=kind, item_id=item_id, media_id=media_id)})
+
+
+@media_bp.post("/api/media/<kind>/<int:item_id>/images/<media_id>/chunks/<int:index>")
+async def upload_image_chunk(kind, item_id, media_id, index):
+    return await _upload_chunk(kind, item_id, media_id, index, "image")
+
+
+@media_bp.post("/api/media/<kind>/<int:item_id>/images/<media_id>/complete")
+async def complete_image(kind, item_id, media_id):
+    return await _complete_chunks(kind, item_id, media_id, "image")
 
 
 @media_bp.post("/api/media/<kind>/<int:item_id>/videos/<media_id>/chunks/<int:index>")
@@ -436,7 +547,7 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
     doc, problem = await _write_target(kind, item_id)
     if problem:
         return problem
-    field = "images" if media_kind == "video" else "files"
+    field = "files" if media_kind == "file" else "images"
     if len(doc.get(field, [])) >= MAX_ATTACHMENTS:
         return jsonify({"success": False, "message": "첨부는 최대 5개까지 가능합니다."}), 400
     if not MEDIA_ID.fullmatch(media_id):
@@ -446,20 +557,35 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
         mime = request.args["mime"]
         size = int(request.args["size"])
         count = int(request.args["count"])
-        chunk_size = int(request.args.get("chunk_size", CHUNK_BYTES)) if media_kind == "video" else CHUNK_BYTES
+        chunk_size = int(request.args["chunk_size"])
+        logical_index = int(request.args["chunk_index"])
+        chunk_offset = int(request.args["chunk_offset"])
     except (KeyError, ValueError) as exc:
-        return jsonify({"success": False, "message": "영상 정보가 올바르지 않습니다."}), 400
+        return jsonify({"success": False, "message": "파일 정보가 올바르지 않습니다."}), 400
     if media_kind == "video":
         valid_type = mime in VIDEO_TYPES
+        expected_logical_size = VIDEO_CHUNK_BYTES
+        limit = MAX_VIDEO_BYTES
+    elif media_kind == "image":
+        valid_type = mime in IMAGE_TYPES
+        expected_logical_size = IMAGE_CHUNK_BYTES
+        limit = MAX_IMAGE_BYTES
     else:
         valid_type = mime == "application/octet-stream" and os.path.splitext(name)[1].lower() in FILE_TYPES
-    limit = MAX_VIDEO_BYTES if media_kind == "video" else MAX_FILE_BYTES
-    if (not valid_type or not 0 < size <= limit or chunk_size not in (CHUNK_BYTES, VIDEO_CHUNK_BYTES)
-            or count != math.ceil(size / chunk_size) or not 0 <= index < count):
+        expected_logical_size = VIDEO_CHUNK_BYTES
+        limit = MAX_FILE_BYTES
+    chunks_per_logical = math.ceil(expected_logical_size / WIRE_CHUNK_BYTES)
+    if (not valid_type or not 0 < size <= limit or chunk_size != expected_logical_size
+            or count != math.ceil(size / chunk_size) or not 0 <= logical_index < count
+            or chunk_offset < 0 or chunk_offset % WIRE_CHUNK_BYTES
+            or index != logical_index * chunks_per_logical + chunk_offset // WIRE_CHUNK_BYTES):
         return jsonify({"success": False, "message": "파일 형식 또는 크기가 올바르지 않습니다."}), 400
-    expected = min(chunk_size, size - index * chunk_size)
-    if request.content_length and request.content_length > expected:
-        return jsonify({"success": False, "message": "영상 조각의 크기가 초과되었습니다."}), 413
+    group_size = min(chunk_size, size - logical_index * chunk_size)
+    expected = min(WIRE_CHUNK_BYTES, group_size - chunk_offset)
+    if expected <= 0:
+        return jsonify({"success": False, "message": "파일 조각 위치가 올바르지 않습니다."}), 400
+    if request.content_length and request.content_length > WIRE_CHUNK_BYTES:
+        return jsonify({"success": False, "message": "전송 조각이 서버 요청 한도를 초과했습니다."}), 413
     data = await request.get_data()
     if media_kind == "file":
         extension = os.path.splitext(name)[1].lower()
@@ -473,28 +599,64 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
             valid_signature = data.startswith(b"PK\x03\x04")
     else:
         valid_signature = _signature(mime, data)
-    if len(data) != expected or (index == 0 and not valid_signature):
+    if len(data) != expected or (logical_index == 0 and chunk_offset == 0 and not valid_signature):
         return jsonify({"success": False, "message": "파일 조각이 올바르지 않습니다."}), 400
     key = ("file:" if media_kind == "file" else "") + _upload_key(kind, item_id, media_id)
     uploads = collection("media_uploads")
     state = await asyncio.to_thread(uploads.find_one, {"_id": key})
-    if state and (state["user_id"] != session["user_id"] or state["size"] != size or state["mime"] != mime or state["name"] != name or state["count"] != count or state.get("chunk_size", CHUNK_BYTES) != chunk_size):
-        return jsonify({"success": False, "message": "업로드 정보가 서로 다릅니다."}), 409
+    if state and (int(state.get("user_id", -1)) != int(session["user_id"])
+                  or state.get("total_size") != size or state.get("mime_type") != mime
+                  or state.get("name") != name or state.get("chunk_count") != count
+                  or state.get("chunk_size") != chunk_size):
+        return jsonify({"success": False, "message": "업로드 정보가 서로 다릅니다. 새로고침 후 다시 선택해 주세요."}), 409
+    if state and logical_index in state.get("uploaded_chunks", []):
+        return jsonify({"success": True, "index": index, "logical_index": logical_index,
+                        "uploaded_chunks": state["uploaded_chunks"]})
     try:
-        sha = await asyncio.to_thread(_blob, data)
+        parts = collection("media_upload_parts")
+        part_key = key + ":" + str(index)
+        await asyncio.to_thread(parts.replace_one, {"_id": part_key}, {
+            "_id": part_key, "upload_id": key, "index": index,
+            "logical_index": logical_index, "offset": chunk_offset,
+            "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+            "data": data, "expire_at": datetime.now(timezone.utc) + timedelta(hours=24),
+        }, upsert=True)
         await asyncio.to_thread(uploads.update_one, {"_id": key}, {
             "$setOnInsert": {
-                "user_id": session["user_id"], "name": name, "mime": mime,
-                "size": size, "count": count, "chunk_size": chunk_size,
+                "user_id": int(session["user_id"]), "uuid": media_id, "name": name,
+                "mime_type": mime, "total_size": size, "chunk_count": count,
+                "chunk_size": chunk_size, "uploaded_chunks": [], "chunks": {}, "sha256": None,
                 "expire_at": datetime.now(timezone.utc) + timedelta(hours=24),
             },
-            "$set": {"chunks." + str(index): {"sha": sha, "size": len(data)}},
+            "$set": {"expire_at": datetime.now(timezone.utc) + timedelta(hours=24)},
         }, upsert=True)
+        group_parts = await asyncio.to_thread(lambda: list(parts.find({
+            "upload_id": key, "logical_index": logical_index,
+        }).sort("offset", 1)))
+        expected_part_count = math.ceil(group_size / WIRE_CHUNK_BYTES)
+        if len(group_parts) == expected_part_count:
+            if any(part["offset"] != part_index * WIRE_CHUNK_BYTES
+                   or part["size"] != min(WIRE_CHUNK_BYTES, group_size - part["offset"])
+                   for part_index, part in enumerate(group_parts)):
+                return jsonify({"success": False, "message": "업로드 조각 정보가 올바르지 않습니다."}), 409
+            logical_data = b"".join(part["data"] for part in group_parts)
+            logical_sha256 = hashlib.sha256(logical_data).hexdigest()
+            github_sha = await asyncio.to_thread(_queued_blob, logical_data)
+            await asyncio.to_thread(uploads.update_one, {"_id": key}, {
+                "$set": {"chunks." + str(logical_index): {
+                    "index": logical_index, "sha": github_sha, "size": len(logical_data),
+                    "sha256": logical_sha256,
+                }},
+                "$addToSet": {"uploaded_chunks": logical_index},
+            })
+            await asyncio.to_thread(parts.delete_many, {"upload_id": key, "logical_index": logical_index})
     except MediaRateLimitError as exc:
-        return jsonify({"success": False, "message": str(exc), "retry_after": exc.retry_after}), 429, {"Retry-After": str(exc.retry_after)}
+        return jsonify({"success": False, "message": str(exc), "retry_after": exc.retry_after}), 429, {"Retry-After": str(math.ceil(exc.retry_after))}
     except MediaStorageError as exc:
         return jsonify({"success": False, "message": str(exc)}), 502
-    return jsonify({"success": True, "index": index})
+    latest = await asyncio.to_thread(uploads.find_one, {"_id": key}, {"uploaded_chunks": 1})
+    return jsonify({"success": True, "index": index, "logical_index": logical_index,
+                    "uploaded_chunks": sorted(latest.get("uploaded_chunks", [])) if latest else []})
 
 
 @media_bp.post("/api/media/<kind>/<int:item_id>/videos/<media_id>/complete")
@@ -513,46 +675,55 @@ async def _complete_chunks(kind, item_id, media_id, media_kind):
         return problem
     if not MEDIA_ID.fullmatch(media_id):
         abort(400)
-    field = "images" if media_kind == "video" else "files"
+    field = "files" if media_kind == "file" else "images"
     if any(item.get("id") == media_id for item in doc.get(field, [])):
+        await asyncio.to_thread(_remove_upload_state, kind, item_id, media_id)
         return jsonify({"success": True, "url": url_for("media.serve_media", kind=kind, item_id=item_id, media_id=media_id)})
     key = ("file:" if media_kind == "file" else "") + _upload_key(kind, item_id, media_id)
     uploads = collection("media_uploads")
     state = await asyncio.to_thread(uploads.find_one, {"_id": key})
-    if not state or state["user_id"] != session["user_id"]:
-        return jsonify({"success": False, "message": "영상 업로드를 찾을 수 없습니다."}), 404
+    if not state or int(state.get("user_id", -1)) != int(session["user_id"]):
+        return jsonify({"success": False, "message": "업로드 상태를 찾을 수 없습니다."}), 404
     if len(doc.get(field, [])) >= MAX_ATTACHMENTS:
         return jsonify({"success": False, "message": "첨부는 최대 5개까지 가능합니다."}), 400
     chunks = state.get("chunks", {})
-    if len(chunks) != state["count"] or sum(part["size"] for part in chunks.values()) != state["size"]:
-        return jsonify({"success": False, "message": "영상 전송이 아직 끝나지 않았습니다."}), 409
-    parts = [chunks.get(str(index)) for index in range(state["count"])]
+    count = state["chunk_count"]
+    size = state["total_size"]
+    parts = [chunks.get(str(index)) for index in range(count)]
     if any(part is None for part in parts):
-        return jsonify({"success": False, "message": "누락된 영상 조각이 있습니다."}), 409
+        return jsonify({"success": False, "message": "누락된 업로드 조각이 있습니다."}), 409
+    if sorted(state.get("uploaded_chunks", [])) != list(range(count)) or sum(part["size"] for part in parts) != size:
+        return jsonify({"success": False, "message": "업로드 전송이 아직 끝나지 않았습니다."}), 409
     try:
-        payload = await request.get_json(silent=True) if media_kind == "video" else None
-        poster_data = _poster_data(payload.get("poster")) if isinstance(payload, dict) else None
+        payload = await request.get_json(silent=True)
+        payload = payload if isinstance(payload, dict) else {}
+        file_sha256 = payload.get("sha256", "")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(file_sha256)):
+            raise ValueError("파일 SHA-256 확인값이 올바르지 않습니다.")
+        poster_data = _poster_data(payload.get("poster")) if media_kind == "video" else None
     except ValueError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
-    prefix = _folder(kind) + "/" + str(item_id) + ("/영상/" if media_kind == "video" else "/첨부파일/") + media_id + "/"
+    directory = {"image": "이미지/", "video": "영상/", "file": "첨부파일/"}[media_kind]
+    prefix = _folder(kind) + "/" + str(item_id) + "/" + directory + media_id + "/"
     files = [(prefix + str(index).zfill(4) + ".part", part["sha"]) for index, part in enumerate(parts)]
     try:
         poster = None
         if poster_data:
-            poster = {"sha": await asyncio.to_thread(_blob, poster_data), "size": len(poster_data)}
+            poster = {"sha": await asyncio.to_thread(_queued_blob, poster_data), "size": len(poster_data)}
             files.append((prefix + "poster.webp", poster["sha"]))
-        await asyncio.to_thread(_commit_blobs, files, "Upload video " + prefix)
+        await asyncio.to_thread(_commit_blobs, files, "Upload media " + prefix)
         media = {
-            "id": media_id, "name": state["name"], "kind": media_kind, "mime": state["mime"],
-            "size": state["size"], "chunks": parts,
+            "id": media_id, "uuid": media_id, "name": state["name"],
+            "kind": media_kind, "mime": state["mime_type"], "mime_type": state["mime_type"],
+            "size": size, "total_size": size, "chunk_count": count,
+            "chunk_size": state["chunk_size"], "uploaded_chunks": list(range(count)),
+            "sha256": file_sha256, "chunks": parts,
         }
-        if media_kind == "video":
-            media["chunk_size"] = state.get("chunk_size", CHUNK_BYTES)
         if poster:
             media["poster"] = poster
         saved = await asyncio.to_thread(_save_attachment, kind, item_id, media, field)
     except MediaRateLimitError as exc:
-        return jsonify({"success": False, "message": str(exc), "retry_after": exc.retry_after}), 429, {"Retry-After": str(exc.retry_after)}
+        return jsonify({"success": False, "message": str(exc), "retry_after": exc.retry_after}), 429, {"Retry-After": str(math.ceil(exc.retry_after))}
     except MediaStorageError as exc:
         return jsonify({"success": False, "message": str(exc)}), 502
     if not saved:
@@ -562,6 +733,7 @@ async def _complete_chunks(kind, item_id, media_id, media_kind):
             pass
         return jsonify({"success": False, "message": "영상 정보 저장에 실패했습니다."}), 409
     await asyncio.to_thread(uploads.delete_one, {"_id": key})
+    await asyncio.to_thread(collection("media_upload_parts").delete_many, {"upload_id": key})
     return jsonify({"success": True, "url": url_for("media.serve_media", kind=kind, item_id=item_id, media_id=media_id)})
 
 
@@ -589,9 +761,27 @@ async def serve_media(kind, item_id, media_id):
         response = Response(b"", status=200, headers=headers, content_type=content_type)
         response.content_length = size
         return response
-    if is_poster or media["kind"] == "image":
+    if is_poster:
         try:
-            data = await asyncio.to_thread(_read_blob, media["poster"]["sha"] if is_poster else media["sha"])
+            data = await asyncio.to_thread(_read_blob, media["poster"]["sha"])
+        except MediaStorageError:
+            abort(502)
+        if len(data) != size:
+            abort(502)
+        return Response(data, status=200, headers=headers, content_type=content_type)
+
+    if media["kind"] == "image":
+        try:
+            if media.get("chunks"):
+                image_parts = []
+                for part in media["chunks"]:
+                    chunk = await asyncio.to_thread(_read_blob, part["sha"])
+                    if len(chunk) != part["size"]:
+                        abort(502)
+                    image_parts.append(chunk)
+                data = b"".join(image_parts)
+            else:
+                data = await asyncio.to_thread(_read_blob, media["sha"])
         except MediaStorageError:
             abort(502)
         if len(data) != size:

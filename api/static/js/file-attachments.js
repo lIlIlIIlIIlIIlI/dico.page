@@ -1,5 +1,6 @@
 window.DicoFileAttachments = window.DicoFileAttachments || (() => {
-    const chunkSize = 768 * 1024;
+    const wireChunkSize = 4 * 1024 * 1024;
+    const chunkSize = 50 * 1024 * 1024;
     const maxSize = 100 * 1024 * 1024;
     const extensions = new Set(['pdf', 'zip', 'txt', 'csv', 'hwp', 'hwpx', 'docx', 'xlsx', 'pptx']);
 
@@ -70,25 +71,39 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
             locked = true;
             picker.disabled = true;
             render();
-            await window.DicoUploadQueue.run(files.filter(entry => !entry.uploaded), 2, async entry => {
+            await window.DicoUploadQueue.run(files.filter(entry => !entry.uploaded), 1, async entry => {
                 const base = '/api/media/' + kind + '/' + id + '/files/' + entry.id;
                 const total = Math.ceil(entry.file.size / chunkSize);
                 const args = '?name=' + encodeURIComponent(entry.name) + '&mime=application%2Foctet-stream'
-                    + '&size=' + entry.file.size + '&count=' + total;
+                    + '&size=' + entry.file.size + '&count=' + total + '&chunk_size=' + chunkSize;
                 entry.failed = false;
-                const uploadChunk = async index => {
-                    await send(base + '/chunks/' + index + args,
-                        entry.file.slice(index * chunkSize, Math.min(entry.file.size, (index + 1) * chunkSize)), csrfToken);
-                    entry.completedChunks.add(index);
-                    entry.progress = '업로드 중 ' + entry.completedChunks.size + '/' + total;
-                    render();
-                };
                 try {
-                    if (!entry.completedChunks.has(0)) await uploadChunk(0);
-                    const remaining = Array.from({length: total - 1}, (_, index) => index + 1)
-                        .filter(index => !entry.completedChunks.has(index));
-                    await window.DicoUploadQueue.run(remaining, 3, uploadChunk);
-                    await send(base + '/complete', '{}', csrfToken, 'application/json');
+                    const statusResponse = await fetch(base + '/status', {
+                        credentials: 'same-origin', headers: {'X-CSRF-Token': csrfToken, 'Accept': 'application/json'}
+                    });
+                    const status = await statusResponse.json();
+                    if (!statusResponse.ok || !status.success) throw new Error(status.message || '업로드 상태를 확인하지 못했습니다.');
+                    if (status.complete) { entry.uploaded = true; render(); return; }
+                    entry.completedChunks = new Set(status.uploaded_chunks || []);
+                    const chunksPerLogical = Math.ceil(chunkSize / wireChunkSize);
+                    const digest = window.DicoSha256.create();
+                    for (let logicalIndex = 0; logicalIndex < total; logicalIndex++) {
+                        const groupStart = logicalIndex * chunkSize;
+                        const groupSize = Math.min(chunkSize, entry.file.size - groupStart);
+                        for (let offset = 0; offset < groupSize; offset += wireChunkSize) {
+                            const start = groupStart + offset;
+                            const body = new Uint8Array(await entry.file.slice(start, Math.min(entry.file.size, start + wireChunkSize)).arrayBuffer());
+                            digest.update(body);
+                            if (entry.completedChunks.has(logicalIndex)) continue;
+                            const index = logicalIndex * chunksPerLogical + offset / wireChunkSize;
+                            const query = args + '&chunk_index=' + logicalIndex + '&chunk_offset=' + offset;
+                            const result = await send(base + '/chunks/' + index + query, body, csrfToken);
+                            entry.completedChunks = new Set(result.uploaded_chunks || entry.completedChunks);
+                        }
+                        entry.progress = '업로드 중 ' + Math.max(logicalIndex + 1, entry.completedChunks.size) + '/' + total;
+                        render();
+                    }
+                    await send(base + '/complete', JSON.stringify({sha256: digest.digest()}), csrfToken, 'application/json');
                     entry.uploaded = true;
                     render();
                 } catch (error) {
@@ -148,13 +163,33 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
     }
 
     async function send(url, body, csrfToken, mime = 'application/octet-stream') {
-        const response = await fetch(url, {
-            method: 'POST', body, credentials: 'same-origin',
-            headers: {'Content-Type': mime, 'X-CSRF-Token': csrfToken, 'Accept': 'application/json'}
-        });
-        let data;
-        try { data = await response.json(); } catch (_) { data = {}; }
-        if (!response.ok || !data.success) {
+        for (let attempt = 1; attempt <= 8; attempt++) {
+            let response;
+            let data;
+            try {
+                response = await fetch(url, {
+                    method: 'POST', body, credentials: 'same-origin',
+                    headers: {'Content-Type': mime, 'X-CSRF-Token': csrfToken, 'Accept': 'application/json'}
+                });
+                try { data = await response.json(); } catch (_) { data = {}; }
+            } catch (error) {
+                if (attempt === 8) throw error;
+                await new Promise(resolve => setTimeout(resolve, (Math.min(60, 2 ** (attempt - 1)) + Math.random() * 0.5) * 1000));
+                continue;
+            }
+            if (response.ok && data.success) return data;
+            const retryable = response.status === 403 || response.status === 429 || response.status >= 500;
+            if (retryable && attempt < 8) {
+                const backoff = Math.min(60, 2 ** (attempt - 1)) + Math.random() * 0.5;
+                const bodyDelay = Number(data.retry_after) || 0;
+                const retryHeader = response.headers?.get?.('Retry-After');
+                const parsedHeader = Number(retryHeader);
+                const retryDate = Date.parse(retryHeader || '');
+                const headerDelay = Number.isFinite(parsedHeader) ? parsedHeader
+                    : Number.isFinite(retryDate) ? Math.max(0, (retryDate - Date.now()) / 1000) : 0;
+                await new Promise(resolve => setTimeout(resolve, Math.min(3600, Math.max(backoff, bodyDelay, headerDelay)) * 1000));
+                continue;
+            }
             throw new Error(data.message || '첨부파일을 저장하지 못했습니다. 다시 시도해 주세요.');
         }
     }

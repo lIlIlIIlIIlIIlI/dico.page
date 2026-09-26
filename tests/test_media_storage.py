@@ -21,10 +21,19 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
 
         class Uploads:
             def find_one(self, query):
-                return {"user_id": 1, "name": "clip.mp4", "mime": "video/mp4", "size": 3,
-                        "count": 1, "chunks": {"0": {"sha": "a" * 40, "size": 3}}}
+                return {"user_id": 1, "uuid": media_id, "name": "clip.mp4", "mime_type": "video/mp4",
+                        "total_size": 3, "chunk_count": 1, "chunk_size": media.VIDEO_CHUNK_BYTES,
+                        "uploaded_chunks": [0], "sha256": None,
+                        "chunks": {"0": {"index": 0, "sha": "a" * 40, "size": 3, "sha256": "c" * 64}}}
 
             def delete_one(self, query):
+                return None
+
+            def update_one(self, query, update):
+                return None
+
+        class UploadParts:
+            def delete_many(self, query):
                 return None
 
         client = app.test_client()
@@ -32,8 +41,11 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             session["user_id"] = 1
         url = "/api/media/posts/1/videos/" + media_id + "/complete"
         encoded = "data:image/webp;base64," + base64.b64encode(poster).decode()
-        with patch.object(media, "_write_target", writable), patch.object(media, "collection", return_value=Uploads()), patch.object(media, "_blob", return_value="b" * 40), patch.object(media, "_commit_blobs") as commit, patch.object(media, "_save_attachment", return_value=True) as save:
-            result = await client.post(url, json={"poster": encoded})
+        with patch.object(media, "_write_target", writable), patch.object(
+                media, "collection", side_effect=lambda name: UploadParts() if name == "media_upload_parts" else Uploads()), \
+                patch.object(media, "_queued_blob", return_value="b" * 40), \
+                patch.object(media, "_commit_blobs") as commit, patch.object(media, "_save_attachment", return_value=True) as save:
+            result = await client.post(url, json={"poster": encoded, "sha256": "d" * 64})
             self.assertEqual(result.status_code, 200)
             self.assertEqual(commit.call_args.args[0][-1], ("게시글/1/영상/" + media_id + "/poster.webp", "b" * 40))
             attachment = save.call_args.args[2]
@@ -74,26 +86,47 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             github.assert_called_once_with("GET", "/git/blobs/" + sha, raw=True)
         media._read_blob.cache_clear()
 
-    async def test_video_allows_10_gib_in_4_mib_chunks_but_rejects_larger_uploads(self):
+    async def test_video_allows_10_gib_with_4_mib_requests_and_50_mib_github_chunks(self):
         media_id = "11111111-1111-4111-8111-111111111111"
 
         async def writable(kind, item_id):
             return {"images": []}, None
 
         class Uploads:
-            def find_one(self, query):
-                return None
+            state = None
+
+            def find_one(self, query, projection=None):
+                return self.state
 
             def update_one(self, query, update, upsert=False):
+                if self.state is None:
+                    self.state = dict(update["$setOnInsert"])
+                return None
+
+        class Parts:
+            def replace_one(self, query, document, upsert=False):
+                self.document = document
+
+            def find(self, query):
+                class Cursor(list):
+                    def sort(self, field, direction):
+                        return self
+                return Cursor()
+
+            def delete_many(self, query):
                 return None
 
         client = app.test_client()
         async with client.session_transaction() as session:
             session["user_id"] = 1
         base = "/api/media/posts/9/videos/" + media_id + "/chunks/0?name=test.mp4&mime=video%2Fmp4&size="
-        signature = b"\0\0\0\x18ftyp" + b"\0" * (media.VIDEO_CHUNK_BYTES - 8)
-        args = "&count=2560&chunk_size=" + str(media.VIDEO_CHUNK_BYTES)
-        with patch.object(media, "_write_target", writable), patch.object(media, "collection", return_value=Uploads()), patch.object(media, "_blob", return_value="a" * 40):
+        signature = b"\0\0\0\x18ftyp" + b"\0" * (media.WIRE_CHUNK_BYTES - 8)
+        count = (media.MAX_VIDEO_BYTES + media.VIDEO_CHUNK_BYTES - 1) // media.VIDEO_CHUNK_BYTES
+        args = "&count=" + str(count) + "&chunk_size=" + str(media.VIDEO_CHUNK_BYTES) + "&chunk_index=0&chunk_offset=0"
+        uploads, parts = Uploads(), Parts()
+        with patch.object(media, "_write_target", writable), patch.object(
+                media, "collection", side_effect=lambda name: parts if name == "media_upload_parts" else uploads), \
+                patch.object(media, "_queued_blob", return_value="a" * 40):
             valid = await client.post(base + str(media.MAX_VIDEO_BYTES) + args, data=signature,
                                       headers={"Content-Type": "video/mp4"})
             self.assertEqual(valid.status_code, 200)
@@ -123,16 +156,38 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
         class Uploads:
             state = None
 
-            def find_one(self, query):
+            def find_one(self, query, projection=None):
                 return self.state
 
             def update_one(self, query, changes, upsert=False):
                 if self.state is None:
-                    self.state = dict(changes["$setOnInsert"], chunks={})
-                self.state["chunks"]["0"] = changes["$set"]["chunks.0"]
+                    self.state = dict(changes["$setOnInsert"])
+                if "$set" in changes:
+                    self.state.update(changes["$set"])
+                for path, value in changes.get("$set", {}).items():
+                    if path.startswith("chunks."):
+                        self.state.setdefault("chunks", {})[path.split(".", 1)[1]] = value
+                value = changes.get("$addToSet", {}).get("uploaded_chunks")
+                if value is not None and value not in self.state.setdefault("uploaded_chunks", []):
+                    self.state["uploaded_chunks"].append(value)
 
             def delete_one(self, query):
                 self.state = None
+
+        class Parts:
+            document = None
+
+            def replace_one(self, query, document, upsert=False):
+                self.document = document
+
+            def find(self, query):
+                class Cursor(list):
+                    def sort(self, field, direction):
+                        return self
+                return Cursor([self.document])
+
+            def delete_many(self, query):
+                self.document = None
 
         async def writable(kind, item_id):
             return {"files": []}, None
@@ -143,14 +198,112 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             session["user_id"] = 1
 
         base = "/api/media/posts/1/files/" + media_id
-        args = "?name=sample.pdf&mime=application%2Foctet-stream&size=" + str(len(payload)) + "&count=1"
-        with patch.object(media, "_write_target", writable), patch.object(media, "collection", return_value=uploads), patch.object(media, "_blob", return_value="a" * 40), patch.object(media, "_commit_blobs") as commit, patch.object(media, "_save_attachment", return_value=True) as save:
+        args = "?name=sample.pdf&mime=application%2Foctet-stream&size=" + str(len(payload)) + "&count=1&chunk_size=" + str(media.VIDEO_CHUNK_BYTES) + "&chunk_index=0&chunk_offset=0"
+        upload_parts = Parts()
+        with patch.object(media, "_write_target", writable), patch.object(
+                media, "collection", side_effect=lambda name: upload_parts if name == "media_upload_parts" else uploads), \
+                patch.object(media, "_queued_blob", return_value="a" * 40), \
+                patch.object(media, "_commit_blobs") as commit, patch.object(media, "_save_attachment", return_value=True) as save:
             part = await client.post(base + "/chunks/0" + args, data=payload, headers={"Content-Type": "application/octet-stream"})
             self.assertEqual(part.status_code, 200)
-            complete = await client.post(base + "/complete", json={})
+            complete = await client.post(base + "/complete", json={"sha256": "e" * 64})
             self.assertEqual(complete.status_code, 200)
             self.assertEqual(commit.call_args.args[0][0][0], "게시글/1/첨부파일/" + media_id + "/0000.part")
             self.assertEqual(save.call_args.args[3], "files")
+
+    async def test_image_upload_stages_small_requests_and_persists_completed_metadata(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        image = b"\x89PNG\r\n\x1a\n"
+
+        class Uploads:
+            state = None
+
+            def find_one(self, query, projection=None):
+                return self.state
+
+            def update_one(self, query, changes, upsert=False):
+                if self.state is None:
+                    self.state = dict(changes.get("$setOnInsert", {}))
+                for path, value in changes.get("$set", {}).items():
+                    if path.startswith("chunks."):
+                        self.state.setdefault("chunks", {})[path.split(".", 1)[1]] = value
+                    else:
+                        self.state[path] = value
+                value = changes.get("$addToSet", {}).get("uploaded_chunks")
+                if value is not None and value not in self.state.setdefault("uploaded_chunks", []):
+                    self.state["uploaded_chunks"].append(value)
+
+            def delete_one(self, query):
+                self.state = None
+
+        class Parts:
+            documents = []
+
+            def replace_one(self, query, document, upsert=False):
+                self.documents = [part for part in self.documents if part["_id"] != document["_id"]]
+                self.documents.append(document)
+
+            def find(self, query):
+                class Cursor(list):
+                    def sort(self, field, direction):
+                        return Cursor(sorted(self, key=lambda part: part[field]))
+                return Cursor([part for part in self.documents
+                               if part["upload_id"] == query["upload_id"]
+                               and part["logical_index"] == query["logical_index"]])
+
+            def delete_many(self, query):
+                self.documents = [part for part in self.documents if part["upload_id"] != query["upload_id"]]
+
+        async def writable(kind, item_id):
+            return {"images": [], "files": []}, None
+
+        uploads, parts = Uploads(), Parts()
+        client = app.test_client()
+        async with client.session_transaction() as session:
+            session["user_id"] = 1
+        collection = lambda name: parts if name == "media_upload_parts" else uploads
+        base = "/api/media/posts/8/images/" + media_id
+        args = ("?name=picture.png&mime=image%2Fpng&size=8&count=1&chunk_size="
+                + str(media.IMAGE_CHUNK_BYTES) + "&chunk_index=0&chunk_offset=0")
+        with patch.object(media, "_write_target", writable), patch.object(media, "collection", side_effect=collection), \
+                patch.object(media, "_queued_blob", return_value="a" * 40), \
+                patch.object(media, "_commit_blobs") as commit, patch.object(media, "_save_attachment", return_value=True) as save:
+            part = await client.post(base + "/chunks/0" + args, data=image, headers={"Content-Type": "image/png"})
+            self.assertEqual(part.status_code, 200)
+            status = await part.get_json()
+            self.assertEqual(status["uploaded_chunks"], [0])
+            self.assertEqual(uploads.state["uuid"], media_id)
+            self.assertEqual(uploads.state["mime_type"], "image/png")
+            self.assertEqual(uploads.state["total_size"], len(image))
+            self.assertEqual(uploads.state["chunk_count"], 1)
+            self.assertEqual(uploads.state["chunk_size"], media.IMAGE_CHUNK_BYTES)
+            self.assertEqual(uploads.state["sha256"], None)
+
+            complete = await client.post(base + "/complete", json={"sha256": "b" * 64})
+            self.assertEqual(complete.status_code, 200)
+            self.assertEqual(commit.call_args.args[0], [("게시글/8/이미지/" + media_id + "/0000.part", "a" * 40)])
+            saved = save.call_args.args[2]
+            self.assertEqual(saved["sha256"], "b" * 64)
+            self.assertEqual(saved["uuid"], media_id)
+            self.assertEqual(saved["uploaded_chunks"], [0])
+
+    async def test_chunked_image_is_reassembled_for_preview(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        image = b"\x89PNG\r\n\x1a\n"
+        document = {"images": [{
+            "id": media_id, "kind": "image", "mime": "image/png", "size": len(image),
+            "chunks": [{"sha": "a" * 40, "size": 4}, {"sha": "b" * 40, "size": 4}],
+        }]}
+
+        async def ready():
+            return None
+
+        with patch.object(media, "ensure_database", ready), patch.object(media, "_document", return_value=document), \
+                patch.object(media, "_read_blob", side_effect=[image[:4], image[4:]]) as read:
+            response = await app.test_client().get("/media/posts/1/" + media_id)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(await response.get_data(), image)
+            self.assertEqual(read.call_count, 2)
 
     async def test_file_upload_rejects_extension_with_invalid_signature(self):
         media_id = "11111111-1111-4111-8111-111111111111"

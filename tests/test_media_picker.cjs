@@ -40,18 +40,20 @@ const sandbox = {
     Event: class {constructor(type) { this.type = type; }},
 };
 vm.runInNewContext(fs.readFileSync('api/static/js/media-upload-queue.js', 'utf8'), sandbox);
+vm.runInNewContext(fs.readFileSync('api/static/js/media-sha256.js', 'utf8'), sandbox);
 vm.runInNewContext(fs.readFileSync('api/static/js/image-attachments.js', 'utf8'), sandbox);
 
 const uploader = sandbox.window.DicoImageAttachments.mount({
     querySelector: selector => selectors.get(selector), addEventListener() {},
 }, {kind: 'posts', ensureDraft: async () => 17});
 
-picker.files = [{name: 'picked.png', type: 'image/png', size: 4}];
+picker.files = [{name: 'picked.png', type: 'image/png', size: 4,
+    slice(start, end) {return {arrayBuffer: async () => new ArrayBuffer(end - start)};}}];
 picker.listeners.change();
 uploader.ready().then(() => {
     assert.equal(uploader.hasFiles(), true);
-    assert(requests.some(url => /^\/api\/media\/posts\/17\/images\/.*\?name=picked\.png$/.test(url)));
-    console.log('File picker keeps its selection until the upload starts.');
+    assert(requests.some(url => /^\/api\/media\/posts\/17\/images\/.*\/chunks\/0\?name=picked\.png/.test(url)));
+    console.log('File picker uploads a photo through the chunked upload route.');
 }).catch(error => {
     console.error(error);
     process.exitCode = 1;
