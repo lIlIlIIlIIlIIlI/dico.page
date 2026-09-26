@@ -266,6 +266,8 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
                 return self.state
 
             def update_one(self, query, changes, upsert=False):
+                if set(changes.get("$setOnInsert", {})) & set(changes.get("$set", {})):
+                    raise AssertionError("MongoDB update operators target the same field")
                 if self.state is None:
                     self.state = dict(changes.get("$setOnInsert", {}))
                 for path, value in changes.get("$set", {}).items():
@@ -322,6 +324,7 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(uploads.state["chunk_count"], 1)
             self.assertEqual(uploads.state["chunk_size"], media.IMAGE_CHUNK_BYTES)
             self.assertEqual(uploads.state["sha256"], None)
+            self.assertIn("expire_at", uploads.state)
 
             complete = await client.post(base + "/complete", json={"sha256": "b" * 64})
             self.assertEqual(complete.status_code, 200)
