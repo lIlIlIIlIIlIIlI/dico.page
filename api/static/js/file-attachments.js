@@ -92,7 +92,8 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
                         const groupSize = Math.min(chunkSize, entry.file.size - groupStart);
                         for (let offset = 0; offset < groupSize; offset += wireChunkSize) {
                             const start = groupStart + offset;
-                            const body = new Uint8Array(await entry.file.slice(start, Math.min(entry.file.size, start + wireChunkSize)).arrayBuffer());
+                            const end = Math.min(groupStart + groupSize, start + wireChunkSize);
+                            const body = new Uint8Array(await entry.file.slice(start, end).arrayBuffer());
                             digest.update(body);
                             if (entry.completedChunks.has(logicalIndex)) continue;
                             const index = logicalIndex * chunksPerLogical + offset / wireChunkSize;
