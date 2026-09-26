@@ -74,6 +74,7 @@ def ensure_database_sync():
             db.notices.create_index([("is_pinned", DESCENDING), ("id", DESCENDING)])
             db.media_uploads.create_index("expire_at", expireAfterSeconds=0)
             db.media_upload_parts.create_index("expire_at", expireAfterSeconds=0)
+            db.media_upload_parts.create_index([("upload_id", ASCENDING), ("logical_index", ASCENDING), ("offset", ASCENDING)])
             db.media_drafts.create_index("expire_at")
             _indexes_ready = True
     return db
