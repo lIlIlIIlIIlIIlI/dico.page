@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 import httpx
 from pymongo import ReturnDocument
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import ConnectionFailure, DuplicateKeyError
 from quart import Blueprint, Response, abort, jsonify, request, session, url_for
 
 from ...module.database import collection, next_id_sync
@@ -22,6 +22,17 @@ from .auth import ensure_database, get_current_user, validate_csrf_token
 
 
 media_bp = Blueprint("media", __name__)
+
+
+@media_bp.errorhandler(ConnectionFailure)
+async def media_database_unavailable(error):
+    return jsonify({
+        "success": False,
+        "message": "MongoDB가 잠시 연결되지 않습니다. 업로드를 이어서 시도합니다.",
+        "retry_after": 5,
+    }), 503, {"Retry-After": "5"}
+
+
 REPOSITORY = "dico-page/postimage"
 CHUNK_BYTES = 768 * 1024
 WIRE_CHUNK_BYTES = 4 * 1024 * 1024

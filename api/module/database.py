@@ -10,11 +10,13 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
+from pymongo.errors import ConnectionFailure
 
 
 MONGODB_URI = os.getenv("MONGODB_URI")
@@ -24,6 +26,7 @@ _client: MongoClient | None = None
 _database = None
 _database_lock = threading.Lock()
 _indexes_ready = False
+_indexes_retry_at = 0.0
 
 
 def utc_now() -> str:
@@ -51,33 +54,41 @@ def collection(name: str):
 
 def ensure_database_sync():
     """컬렉션과 인덱스를 한 번만 준비합니다."""
-    global _indexes_ready
+    global _indexes_ready, _indexes_retry_at
     db = get_database_sync()
-    if _indexes_ready:
+    if _indexes_ready or time.monotonic() < _indexes_retry_at:
         return db
     with _database_lock:
-        if not _indexes_ready:
-            db.users.create_index("id", unique=True)
-            db.users.create_index("user_uid", unique=True)
-            db.users.create_index("email", unique=True, collation={"locale": "en", "strength": 2})
-            db.users.create_index("nickname", unique=True, collation={"locale": "en", "strength": 2})
-            db.user_profiles.create_index("user_id", unique=True)
-            db.posts.create_index([("category", ASCENDING), ("id", DESCENDING)])
-            db.posts.create_index([("author_id", ASCENDING), ("id", DESCENDING)])
-            db.posts.create_index([("created_at", DESCENDING)])
-            db.comments.create_index([("post_id", ASCENDING), ("id", ASCENDING)])
-            db.comments.create_index([("author_id", ASCENDING), ("id", DESCENDING)])
-            db.post_likes.create_index([("post_id", ASCENDING), ("user_id", ASCENDING)], unique=True)
-            db.notifications.create_index([("recipient_user_id", ASCENDING), ("created_at", DESCENDING)])
-            db.notifications.create_index([("recipient_user_id", ASCENDING), ("is_read", ASCENDING)])
-            db.notification_settings.create_index("user_id", unique=True)
-            db.notices.create_index([("is_pinned", DESCENDING), ("id", DESCENDING)])
-            db.media_uploads.create_index("expire_at", expireAfterSeconds=0)
-            db.media_upload_parts.create_index("expire_at", expireAfterSeconds=0)
-            db.media_upload_parts.create_index([("upload_id", ASCENDING), ("logical_index", ASCENDING), ("offset", ASCENDING)])
-            db.media_drafts.create_index("expire_at")
-            _indexes_ready = True
+        if not _indexes_ready and time.monotonic() >= _indexes_retry_at:
+            try:
+                _create_indexes(db)
+            except ConnectionFailure:
+                _indexes_retry_at = time.monotonic() + 30
+            else:
+                _indexes_ready = True
     return db
+
+
+def _create_indexes(db):
+    db.users.create_index("id", unique=True)
+    db.users.create_index("user_uid", unique=True)
+    db.users.create_index("email", unique=True, collation={"locale": "en", "strength": 2})
+    db.users.create_index("nickname", unique=True, collation={"locale": "en", "strength": 2})
+    db.user_profiles.create_index("user_id", unique=True)
+    db.posts.create_index([("category", ASCENDING), ("id", DESCENDING)])
+    db.posts.create_index([("author_id", ASCENDING), ("id", DESCENDING)])
+    db.posts.create_index([("created_at", DESCENDING)])
+    db.comments.create_index([("post_id", ASCENDING), ("id", ASCENDING)])
+    db.comments.create_index([("author_id", ASCENDING), ("id", DESCENDING)])
+    db.post_likes.create_index([("post_id", ASCENDING), ("user_id", ASCENDING)], unique=True)
+    db.notifications.create_index([("recipient_user_id", ASCENDING), ("created_at", DESCENDING)])
+    db.notifications.create_index([("recipient_user_id", ASCENDING), ("is_read", ASCENDING)])
+    db.notification_settings.create_index("user_id", unique=True)
+    db.notices.create_index([("is_pinned", DESCENDING), ("id", DESCENDING)])
+    db.media_uploads.create_index("expire_at", expireAfterSeconds=0)
+    db.media_upload_parts.create_index("expire_at", expireAfterSeconds=0)
+    db.media_upload_parts.create_index([("upload_id", ASCENDING), ("logical_index", ASCENDING), ("offset", ASCENDING)])
+    db.media_drafts.create_index("expire_at")
 
 
 async def ensure_database():
@@ -175,9 +186,10 @@ async def migrate_sqlite_to_mongodb(sqlite_path: str | Path, *, replace: bool = 
 
 
 def close_database() -> None:
-    global _client, _database, _indexes_ready
+    global _client, _database, _indexes_ready, _indexes_retry_at
     if _client is not None:
         _client.close()
     _client = None
     _database = None
     _indexes_ready = False
+    _indexes_retry_at = 0.0
