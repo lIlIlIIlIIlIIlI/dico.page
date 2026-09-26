@@ -552,6 +552,11 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
         return jsonify({"success": False, "message": "첨부는 최대 5개까지 가능합니다."}), 400
     if not MEDIA_ID.fullmatch(media_id):
         abort(400)
+    if any(field not in request.args for field in ("chunk_size", "chunk_index", "chunk_offset")):
+        return jsonify({
+            "success": False, "reload_required": True,
+            "message": "업로드 방식이 변경되었습니다. 페이지를 새로고침한 뒤 파일을 다시 선택해 주세요.",
+        }), 409
     try:
         name = _name(request.args.get("name"))
         mime = request.args["mime"]
