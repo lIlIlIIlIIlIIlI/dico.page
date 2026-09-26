@@ -1,6 +1,6 @@
 window.DicoImageAttachments = window.DicoImageAttachments || (() => {
     const chunkSize = 768 * 1024;
-    const maxVideo = 100 * 1024 * 1024;
+    const maxVideo = 200 * 1024 * 1024;
     const maxOriginalImage = 8 * 1024 * 1024;
     const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
     const videoTypes = new Set(['video/mp4', 'video/webm', 'video/ogg']);
@@ -207,7 +207,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
 
         async function prepare(file) {
             if (videoTypes.has(file.type)) {
-                if (!file.size || file.size > maxVideo) throw new Error((file.name || '이미지') + ': 영상은 100MB 이하로 올려 주세요.');
+                if (!file.size || file.size > maxVideo) throw new Error((file.name || '이미지') + ': 영상은 200MB 이하로 올려 주세요.');
                 return file;
             }
             if (!imageTypes.has(file.type)) throw new Error((file.name || '이미지') + ': PNG, JPG, WebP, GIF 또는 MP4, WebM, OGG만 지원합니다.');

@@ -20,8 +20,10 @@ from .auth import ensure_database, get_current_user, validate_csrf_token
 media_bp = Blueprint("media", __name__)
 REPOSITORY = "dico-page/postimage"
 CHUNK_BYTES = 768 * 1024
-PLAYBACK_RANGE_CHUNKS = 4
-MAX_VIDEO_BYTES = 100 * 1024 * 1024
+PLAYBACK_READ_CONCURRENCY = 4
+MAX_PLAYBACK_RANGE_BYTES = 200 * 1024 * 1024
+MAX_VIDEO_BYTES = 200 * 1024 * 1024
+MAX_FILE_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENTS = 5
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 VIDEO_TYPES = {"video/mp4": "mp4", "video/webm": "webm", "video/ogg": "ogv"}
@@ -401,7 +403,8 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
         valid_type = mime in VIDEO_TYPES
     else:
         valid_type = mime == "application/octet-stream" and os.path.splitext(name)[1].lower() in FILE_TYPES
-    if not valid_type or not 0 < size <= MAX_VIDEO_BYTES or count != math.ceil(size / CHUNK_BYTES) or not 0 <= index < count:
+    limit = MAX_VIDEO_BYTES if media_kind == "video" else MAX_FILE_BYTES
+    if not valid_type or not 0 < size <= limit or count != math.ceil(size / CHUNK_BYTES) or not 0 <= index < count:
         return jsonify({"success": False, "message": "파일 형식 또는 크기가 올바르지 않습니다."}), 400
     expected = min(CHUNK_BYTES, size - index * CHUNK_BYTES)
     if request.content_length and request.content_length > expected:
@@ -548,18 +551,35 @@ async def serve_media(kind, item_id, media_id):
     if start >= size:
         return Response(b"", status=416, headers={"Content-Range": "bytes */" + str(size)})
     index = start // CHUNK_BYTES
-    offset = start % CHUNK_BYTES
-    end = min(size - 1, (index + PLAYBACK_RANGE_CHUNKS) * CHUNK_BYTES - 1)
+    end = min(size - 1, start + MAX_PLAYBACK_RANGE_BYTES - 1)
     if match and match.group(2):
         end = min(end, int(match.group(2)))
     if end < start:
         return Response(b"", status=416, headers={"Content-Range": "bytes */" + str(size)})
     parts = media["chunks"][index:end // CHUNK_BYTES + 1]
     try:
-        chunks = await asyncio.gather(*(asyncio.to_thread(_read_blob, part["sha"]) for part in parts))
+        first = await asyncio.to_thread(_read_blob, parts[0]["sha"])
     except MediaStorageError:
         abort(502)
-    if any(len(chunk) != part["size"] for chunk, part in zip(chunks, parts)):
+    if len(first) != parts[0]["size"]:
         abort(502)
+
+    def selected_bytes(chunk, part_index):
+        absolute = part_index * CHUNK_BYTES
+        return chunk[max(0, start - absolute):min(len(chunk), end + 1 - absolute)]
+
+    async def stream_range():
+        yield selected_bytes(first, index)
+        for group_start in range(1, len(parts), PLAYBACK_READ_CONCURRENCY):
+            group = parts[group_start:group_start + PLAYBACK_READ_CONCURRENCY]
+            chunks = await asyncio.gather(*(asyncio.to_thread(_read_blob, part["sha"]) for part in group))
+            for offset, (chunk, part) in enumerate(zip(chunks, group)):
+                if len(chunk) != part["size"]:
+                    raise MediaStorageError("저장된 파일 크기가 올바르지 않습니다.")
+                yield selected_bytes(chunk, index + group_start + offset)
+
     headers["Content-Range"] = "bytes " + str(start) + "-" + str(end) + "/" + str(size)
-    return Response(b"".join(chunks)[offset:offset + end - start + 1], status=206, headers=headers, content_type=content_type)
+    response = Response(stream_range(), status=206, headers=headers, content_type=content_type)
+    response.content_length = end - start + 1
+    response.timeout = None
+    return response
