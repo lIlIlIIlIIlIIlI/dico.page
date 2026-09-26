@@ -24,7 +24,7 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             github.assert_called_once_with("GET", "/git/blobs/" + sha, raw=True)
         media._read_blob.cache_clear()
 
-    async def test_video_allows_100_mib_but_rejects_larger_uploads(self):
+    async def test_video_allows_200_mib_but_rejects_larger_uploads(self):
         media_id = "11111111-1111-4111-8111-111111111111"
 
         async def writable(kind, item_id):
@@ -43,12 +43,27 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
         base = "/api/media/posts/9/videos/" + media_id + "/chunks/0?name=test.mp4&mime=video%2Fmp4&size="
         signature = b"\0\0\0\x18ftyp" + b"\0" * (media.CHUNK_BYTES - 8)
         with patch.object(media, "_write_target", writable), patch.object(media, "collection", return_value=Uploads()), patch.object(media, "_blob", return_value="a" * 40):
-            valid = await client.post(base + str(100 * 1024 * 1024) + "&count=134", data=signature,
+            valid = await client.post(base + str(200 * 1024 * 1024) + "&count=267", data=signature,
                                       headers={"Content-Type": "video/mp4"})
             self.assertEqual(valid.status_code, 200)
-            too_large = await client.post(base + str(100 * 1024 * 1024 + 1) + "&count=134", data=signature,
+            too_large = await client.post(base + str(200 * 1024 * 1024 + 1) + "&count=267", data=signature,
                                           headers={"Content-Type": "video/mp4"})
             self.assertEqual(too_large.status_code, 400)
+
+    async def test_general_file_limit_remains_100_mib(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+
+        async def writable(kind, item_id):
+            return {"files": []}, None
+
+        with patch.object(media, "_write_target", writable), patch.object(media, "_blob") as write:
+            response = await app.test_client().post(
+                "/api/media/posts/1/files/" + media_id + "/chunks/0?name=report.pdf&mime=application%2Foctet-stream&size="
+                + str(100 * 1024 * 1024 + 1) + "&count=134",
+                data=b"%PDF-", headers={"Content-Type": "application/octet-stream"},
+            )
+            self.assertEqual(response.status_code, 400)
+            write.assert_not_called()
 
     async def test_file_upload_commits_into_separate_attachment_folder(self):
         media_id = "11111111-1111-4111-8111-111111111111"
@@ -150,7 +165,7 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await response.get_data(), last)
             self.assertEqual(response.headers["Content-Range"], "bytes " + str(media.CHUNK_BYTES) + "-" + str(media.CHUNK_BYTES + 2) + "/" + str(media.CHUNK_BYTES + 3))
 
-    async def test_video_range_reads_four_chunks_concurrently_and_caps_response(self):
+    async def test_video_range_streams_beyond_three_mib_with_bounded_concurrency(self):
         media_id = "11111111-1111-4111-8111-111111111111"
         parts = [bytes([65 + index]) * media.CHUNK_BYTES for index in range(6)]
         shas = [str(index) * 40 for index in range(6)]
@@ -166,15 +181,57 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
         barrier = Barrier(4)
 
         def read(sha):
-            barrier.wait(timeout=3)
+            if 1 <= shas.index(sha) <= 4:
+                barrier.wait(timeout=3)
             return parts[shas.index(sha)]
 
         with patch.object(media, "ensure_database", ready), patch.object(media, "_document", return_value=document), patch.object(media, "_read_blob", side_effect=read) as reader:
             response = await app.test_client().get("/media/posts/1/" + media_id, headers={"Range": "bytes=0-"})
             self.assertEqual(response.status_code, 206)
-            self.assertEqual(await response.get_data(), b"".join(parts[:4]))
-            self.assertEqual(response.headers["Content-Range"], "bytes 0-" + str(4 * media.CHUNK_BYTES - 1) + "/" + str(6 * media.CHUNK_BYTES))
-            self.assertEqual(reader.call_count, 4)
+            self.assertEqual(await response.get_data(), b"".join(parts))
+            self.assertEqual(response.headers["Content-Range"], "bytes 0-" + str(6 * media.CHUNK_BYTES - 1) + "/" + str(6 * media.CHUNK_BYTES))
+            self.assertEqual(response.headers["Content-Length"], str(6 * media.CHUNK_BYTES))
+            self.assertEqual(reader.call_count, 6)
+
+    async def test_video_stream_yields_first_chunk_before_reading_the_next(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        document = {"images": [{
+            "id": media_id, "kind": "video", "mime": "video/mp4",
+            "size": 2 * media.CHUNK_BYTES,
+            "chunks": [{"sha": "a" * 40, "size": media.CHUNK_BYTES},
+                       {"sha": "b" * 40, "size": media.CHUNK_BYTES}],
+        }]}
+
+        async def ready():
+            return None
+
+        with patch.object(media, "ensure_database", ready), patch.object(media, "_document", return_value=document), patch.object(media, "_read_blob", side_effect=[b"a" * media.CHUNK_BYTES, b"b" * media.CHUNK_BYTES]) as reader:
+            async with app.test_request_context("/media/posts/1/" + media_id, headers={"Range": "bytes=0-"}):
+                response = await media.serve_media("posts", 1, media_id)
+                stream = response.response.__aiter__()
+                self.assertEqual(await stream.__anext__(), b"a" * media.CHUNK_BYTES)
+                self.assertEqual(reader.call_count, 1)
+                self.assertEqual(await stream.__anext__(), b"b" * media.CHUNK_BYTES)
+                self.assertEqual(reader.call_count, 2)
+
+    async def test_video_range_caps_at_200_mib_without_buffering_it(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        size = 201 * 1024 * 1024
+        document = {"images": [{
+            "id": media_id, "kind": "video", "mime": "video/mp4", "size": size,
+            "chunks": [{"sha": "a" * 40, "size": media.CHUNK_BYTES} for _ in range(size // media.CHUNK_BYTES)],
+        }]}
+
+        async def ready():
+            return None
+
+        with patch.object(media, "ensure_database", ready), patch.object(media, "_document", return_value=document), patch.object(media, "_read_blob", return_value=b"a" * media.CHUNK_BYTES) as reader:
+            async with app.test_request_context("/media/posts/1/" + media_id, headers={"Range": "bytes=0-"}):
+                response = await media.serve_media("posts", 1, media_id)
+                self.assertEqual(response.status_code, 206)
+                self.assertEqual(response.headers["Content-Range"], "bytes 0-" + str(media.MAX_PLAYBACK_RANGE_BYTES - 1) + "/" + str(size))
+                self.assertEqual(response.headers["Content-Length"], str(media.MAX_PLAYBACK_RANGE_BYTES))
+                reader.assert_called_once()
 
     async def test_video_range_honors_seek_offset_and_explicit_end(self):
         media_id = "11111111-1111-4111-8111-111111111111"
