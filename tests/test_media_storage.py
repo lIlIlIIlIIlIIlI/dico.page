@@ -256,6 +256,7 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(reader.call_count, 2)
 
     async def test_open_video_range_is_bounded_and_followup_range_can_continue(self):
+        self.assertEqual(media.OPEN_PLAYBACK_RANGE_BYTES, 10 * 1024 * 1024)
         media_id = "11111111-1111-4111-8111-111111111111"
         size = 201 * 1024 * 1024
         document = {"images": [{
