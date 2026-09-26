@@ -632,7 +632,6 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
                 "user_id": int(session["user_id"]), "uuid": media_id, "name": name,
                 "mime_type": mime, "total_size": size, "chunk_count": count,
                 "chunk_size": chunk_size, "uploaded_chunks": [], "chunks": {}, "sha256": None,
-                "expire_at": datetime.now(timezone.utc) + timedelta(hours=24),
             },
             "$set": {"expire_at": datetime.now(timezone.utc) + timedelta(hours=24)},
         }, upsert=True)
