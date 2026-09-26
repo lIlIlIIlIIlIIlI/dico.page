@@ -5,6 +5,7 @@ import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -19,6 +20,7 @@ from .auth import ensure_database, get_current_user, validate_csrf_token
 media_bp = Blueprint("media", __name__)
 REPOSITORY = "dico-page/postimage"
 CHUNK_BYTES = 768 * 1024
+PLAYBACK_RANGE_CHUNKS = 4
 MAX_VIDEO_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENTS = 5
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
@@ -31,14 +33,14 @@ class MediaStorageError(Exception):
     pass
 
 
-def _github(method, endpoint, payload=None):
+def _github(method, endpoint, payload=None, raw=False):
     token = os.getenv("postimage", "").strip()
     if not token:
         raise MediaStorageError("서버에 postimage GitHub 토큰이 설정되지 않았습니다.")
     url = "https://api.github.com/repos/" + REPOSITORY + endpoint
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     headers = {
-        "Accept": "application/vnd.github+json",
+        "Accept": "application/vnd.github.raw+json" if raw else "application/vnd.github+json",
         "Authorization": "Bearer " + token,
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "dico-page-media",
@@ -47,7 +49,7 @@ def _github(method, endpoint, payload=None):
         headers["Content-Type"] = "application/json"
     try:
         with urlopen(Request(url, data=body, headers=headers, method=method), timeout=20) as response:
-            return json.load(response)
+            return response.read() if raw else json.load(response)
     except HTTPError as exc:
         if exc.code in (401, 403):
             raise MediaStorageError("postimage 토큰의 저장소 접근 권한을 확인해 주세요.") from exc
@@ -67,13 +69,11 @@ def _blob(data):
     return result["sha"]
 
 
+@lru_cache(maxsize=32)
 def _read_blob(sha):
     if not re.fullmatch(r"[0-9a-f]{40}", str(sha)):
         raise MediaStorageError("미디어 정보가 올바르지 않습니다.")
-    result = _github("GET", "/git/blobs/" + sha)
-    if result.get("encoding") != "base64":
-        raise MediaStorageError("저장된 미디어를 읽을 수 없습니다.")
-    return base64.b64decode(result["content"], validate=False)
+    return _github("GET", "/git/blobs/" + sha, raw=True)
 
 
 def _commit_blobs(files, message):
@@ -549,17 +549,17 @@ async def serve_media(kind, item_id, media_id):
         return Response(b"", status=416, headers={"Content-Range": "bytes */" + str(size)})
     index = start // CHUNK_BYTES
     offset = start % CHUNK_BYTES
-    part = media["chunks"][index]
-    end = min(size - 1, index * CHUNK_BYTES + part["size"] - 1)
+    end = min(size - 1, (index + PLAYBACK_RANGE_CHUNKS) * CHUNK_BYTES - 1)
     if match and match.group(2):
         end = min(end, int(match.group(2)))
     if end < start:
         return Response(b"", status=416, headers={"Content-Range": "bytes */" + str(size)})
+    parts = media["chunks"][index:end // CHUNK_BYTES + 1]
     try:
-        chunk = await asyncio.to_thread(_read_blob, part["sha"])
+        chunks = await asyncio.gather(*(asyncio.to_thread(_read_blob, part["sha"]) for part in parts))
     except MediaStorageError:
         abort(502)
-    if len(chunk) != part["size"]:
+    if any(len(chunk) != part["size"] for chunk, part in zip(chunks, parts)):
         abort(502)
     headers["Content-Range"] = "bytes " + str(start) + "-" + str(end) + "/" + str(size)
-    return Response(chunk[offset:offset + end - start + 1], status=206, headers=headers, content_type=content_type)
+    return Response(b"".join(chunks)[offset:offset + end - start + 1], status=206, headers=headers, content_type=content_type)
