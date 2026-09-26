@@ -7,8 +7,8 @@
             if (!entry.isIntersecting) return;
             const video = entry.target;
             streamObserver.unobserve(video);
-            if (video.paused && video.preload !== 'auto') {
-                video.preload = 'auto';
+            if (video.paused && video.preload === 'none') {
+                video.preload = 'metadata';
                 video.load();
             }
         });
@@ -19,7 +19,7 @@
             if (video.dataset.dicoStreamReady) return;
             video.dataset.dicoStreamReady = 'true';
             if (streamObserver) streamObserver.observe(video);
-            else { video.preload = 'auto'; video.load?.(); }
+            else if (video.preload === 'none') { video.preload = 'metadata'; video.load?.(); }
         });
         if (!window.Plyr) return;
         for (const player of players) {

@@ -536,7 +536,7 @@ def _render_inline_video(video, kind, item_id):
     name = html.escape(video.get("name", "영상"), quote=True)
     return (
         '<figure class="dico-media dico-media-attachment">'
-        f'<video class="dico-media-frame" src="{source}"{poster} controls preload="metadata" playsinline data-dico-stream></video>'
+        f'<video class="dico-media-frame" src="{source}"{poster} controls preload="none" playsinline data-dico-stream></video>'
         '<figcaption class="dico-media-caption">'
         f'<span>{name}</span><a href="{download}" download="{name}">다운로드</a>'
         '</figcaption></figure>'

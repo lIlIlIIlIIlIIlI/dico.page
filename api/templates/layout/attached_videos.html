@@ -3,7 +3,7 @@
 <section class="mb-7 space-y-6" aria-label="첨부 영상">
     {% for video in videos %}
     <figure data-dico-player-frame class="min-w-0 overflow-hidden rounded-xl border border-base-200 bg-base-200/30">
-        <video src="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=video.id) }}" {% if video.poster %}poster="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=video.id, poster=1) }}" {% endif %}controls preload="metadata" playsinline data-dico-player data-dico-stream class="aspect-video w-full bg-black object-contain"></video>
+        <video src="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=video.id) }}" {% if video.poster %}poster="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=video.id, poster=1) }}" {% endif %}controls preload="none" playsinline data-dico-player data-dico-stream class="aspect-video w-full bg-black object-contain"></video>
         <figcaption class="flex min-w-0 items-center justify-between gap-3 px-4 py-3 text-sm text-base-content/70">
             <span class="min-w-0 truncate" title="{{ video.name }}">{{ video.name }}</span>
             <a data-dico-download class="shrink-0 font-medium text-primary hover:underline" href="{{ url_for('media.serve_media', kind=kind, item_id=item_id, media_id=video.id, download=1) }}" download="{{ video.name }}">다운로드</a>

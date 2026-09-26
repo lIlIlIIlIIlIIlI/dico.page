@@ -1,16 +1,14 @@
 import asyncio
 import base64
 import binascii
-import json
 import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
 
+import httpx
 from pymongo import ReturnDocument
 from quart import Blueprint, Response, abort, jsonify, request, session, url_for
 
@@ -24,6 +22,7 @@ CHUNK_BYTES = 768 * 1024
 POSTER_BYTES = 128 * 1024
 PLAYBACK_READ_CONCURRENCY = 4
 MAX_PLAYBACK_RANGE_BYTES = 200 * 1024 * 1024
+OPEN_PLAYBACK_RANGE_BYTES = 4 * 1024 * 1024
 MAX_VIDEO_BYTES = 200 * 1024 * 1024
 MAX_FILE_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENTS = 5
@@ -37,32 +36,37 @@ class MediaStorageError(Exception):
     pass
 
 
+@lru_cache(maxsize=1)
+def _github_client():
+    return httpx.Client(timeout=20, follow_redirects=True,
+                        limits=httpx.Limits(max_connections=16, max_keepalive_connections=12))
+
+
 def _github(method, endpoint, payload=None, raw=False):
     token = os.getenv("postimage", "").strip()
     if not token:
         raise MediaStorageError("서버에 postimage GitHub 토큰이 설정되지 않았습니다.")
     url = "https://api.github.com/repos/" + REPOSITORY + endpoint
-    body = json.dumps(payload).encode("utf-8") if payload is not None else None
     headers = {
         "Accept": "application/vnd.github.raw+json" if raw else "application/vnd.github+json",
         "Authorization": "Bearer " + token,
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "dico-page-media",
+        "Accept-Encoding": "identity",
     }
-    if body is not None:
-        headers["Content-Type"] = "application/json"
     try:
-        with urlopen(Request(url, data=body, headers=headers, method=method), timeout=20) as response:
-            return response.read() if raw else json.load(response)
-    except HTTPError as exc:
-        if exc.code in (401, 403):
+        response = _github_client().request(method, url, headers=headers, json=payload)
+        response.raise_for_status()
+        return response.content if raw else response.json()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
             raise MediaStorageError("postimage 토큰의 저장소 접근 권한을 확인해 주세요.") from exc
-        if exc.code in (409, 422):
+        if exc.response.status_code in (409, 422):
             raise MediaStorageError("GitHub 저장소가 동시에 변경되었습니다. 다시 시도해 주세요.") from exc
-        if exc.code == 404:
+        if exc.response.status_code == 404:
             raise MediaStorageError("GitHub 저장소 또는 파일을 찾을 수 없습니다.") from exc
         raise MediaStorageError("GitHub 미디어 저장 요청이 실패했습니다.") from exc
-    except (URLError, TimeoutError, ValueError) as exc:
+    except (httpx.RequestError, ValueError) as exc:
         raise MediaStorageError("GitHub 미디어 저장소에 연결하지 못했습니다.") from exc
 
 
@@ -584,7 +588,8 @@ async def serve_media(kind, item_id, media_id):
     if start >= size:
         return Response(b"", status=416, headers={"Content-Range": "bytes */" + str(size)})
     index = start // CHUNK_BYTES
-    end = min(size - 1, start + MAX_PLAYBACK_RANGE_BYTES - 1)
+    limit = OPEN_PLAYBACK_RANGE_BYTES if media["kind"] == "video" and match and not match.group(2) else MAX_PLAYBACK_RANGE_BYTES
+    end = min(size - 1, start + limit - 1)
     if match and match.group(2):
         end = min(end, int(match.group(2)))
     if end < start:

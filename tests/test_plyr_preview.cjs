@@ -61,10 +61,17 @@ sandbox.window.DicoPlyr.apply();
 assert.equal(created.length, 2);
 assert.equal(page.videos[1].dataset.dicoPlyrReady, 'true');
 
-const video = {dataset: {}, paused: true, preload: 'metadata', load() {this.loads = (this.loads || 0) + 1;}};
+const video = {dataset: {}, paused: true, preload: 'none', load() {this.loads = (this.loads || 0) + 1;}};
 page.videos.push(video);
 sandbox.window.DicoPlyr.apply();
 assert.equal(streamObserver.target, video);
 streamObserver.callback([{isIntersecting: true, target: video}]);
-assert.equal(video.preload, 'auto');
+assert.equal(video.preload, 'metadata');
 assert.equal(video.loads, 1);
+
+const alreadyLoading = {dataset: {}, paused: true, preload: 'metadata', load() {this.loads = (this.loads || 0) + 1;}};
+page.videos.push(alreadyLoading);
+sandbox.window.DicoPlyr.apply();
+streamObserver.callback([{isIntersecting: true, target: alreadyLoading}]);
+assert.equal(alreadyLoading.preload, 'metadata');
+assert.equal(alreadyLoading.loads, undefined);
