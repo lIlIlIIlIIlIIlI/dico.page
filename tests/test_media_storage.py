@@ -1,4 +1,6 @@
+import io
 import unittest
+from threading import Barrier
 from unittest.mock import patch
 
 from api.index import app
@@ -6,6 +8,22 @@ from api.routes.module import media_storage as media
 
 
 class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
+    def test_github_raw_mode_returns_bytes_without_base64_decoding(self):
+        payload = b"\0\0\0\x18ftypbinary-video"
+        with patch.dict("os.environ", {"postimage": "test-token"}), patch.object(media, "urlopen", return_value=io.BytesIO(payload)) as open_url:
+            self.assertEqual(media._github("GET", "/git/blobs/" + "f" * 40, raw=True), payload)
+            request = open_url.call_args.args[0]
+            self.assertEqual(request.get_header("Accept"), "application/vnd.github.raw+json")
+
+    def test_blob_reads_raw_bytes_and_reuses_warm_cache(self):
+        sha = "f" * 40
+        media._read_blob.cache_clear()
+        with patch.object(media, "_github", return_value=b"video bytes") as github:
+            self.assertEqual(media._read_blob(sha), b"video bytes")
+            self.assertEqual(media._read_blob(sha), b"video bytes")
+            github.assert_called_once_with("GET", "/git/blobs/" + sha, raw=True)
+        media._read_blob.cache_clear()
+
     async def test_video_allows_100_mib_but_rejects_larger_uploads(self):
         media_id = "11111111-1111-4111-8111-111111111111"
 
@@ -131,6 +149,53 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 206)
             self.assertEqual(await response.get_data(), last)
             self.assertEqual(response.headers["Content-Range"], "bytes " + str(media.CHUNK_BYTES) + "-" + str(media.CHUNK_BYTES + 2) + "/" + str(media.CHUNK_BYTES + 3))
+
+    async def test_video_range_reads_four_chunks_concurrently_and_caps_response(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        parts = [bytes([65 + index]) * media.CHUNK_BYTES for index in range(6)]
+        shas = [str(index) * 40 for index in range(6)]
+        document = {"images": [{
+            "id": media_id, "kind": "video", "mime": "video/mp4",
+            "size": 6 * media.CHUNK_BYTES,
+            "chunks": [{"sha": sha, "size": media.CHUNK_BYTES} for sha in shas],
+        }]}
+
+        async def ready():
+            return None
+
+        barrier = Barrier(4)
+
+        def read(sha):
+            barrier.wait(timeout=3)
+            return parts[shas.index(sha)]
+
+        with patch.object(media, "ensure_database", ready), patch.object(media, "_document", return_value=document), patch.object(media, "_read_blob", side_effect=read) as reader:
+            response = await app.test_client().get("/media/posts/1/" + media_id, headers={"Range": "bytes=0-"})
+            self.assertEqual(response.status_code, 206)
+            self.assertEqual(await response.get_data(), b"".join(parts[:4]))
+            self.assertEqual(response.headers["Content-Range"], "bytes 0-" + str(4 * media.CHUNK_BYTES - 1) + "/" + str(6 * media.CHUNK_BYTES))
+            self.assertEqual(reader.call_count, 4)
+
+    async def test_video_range_honors_seek_offset_and_explicit_end(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        first = b"a" * media.CHUNK_BYTES
+        second = b"b" * media.CHUNK_BYTES
+        document = {"images": [{
+            "id": media_id, "kind": "video", "mime": "video/mp4",
+            "size": len(first) + len(second),
+            "chunks": [{"sha": "a" * 40, "size": len(first)}, {"sha": "b" * 40, "size": len(second)}],
+        }]}
+
+        async def ready():
+            return None
+
+        start = media.CHUNK_BYTES - 2
+        with patch.object(media, "ensure_database", ready), patch.object(media, "_document", return_value=document), patch.object(media, "_read_blob", side_effect=[first, second]):
+            response = await app.test_client().get("/media/posts/1/" + media_id,
+                                                   headers={"Range": "bytes=" + str(start) + "-" + str(start + 4)})
+            self.assertEqual(response.status_code, 206)
+            self.assertEqual(await response.get_data(), b"aabbb")
+            self.assertEqual(response.headers["Content-Range"], "bytes " + str(start) + "-" + str(start + 4) + "/" + str(2 * media.CHUNK_BYTES))
 
     async def test_missing_attachment_returns_404_without_fetching_github(self):
         async def ready():
