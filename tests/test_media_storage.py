@@ -9,6 +9,24 @@ from api.routes.module import media_storage as media
 
 
 class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_outdated_upload_script_receives_reload_instruction(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+
+        async def writable(kind, item_id):
+            return {"images": [], "files": []}, None
+
+        client = app.test_client()
+        with patch.object(media, "_write_target", writable):
+            response = await client.post(
+                "/api/media/posts/1/videos/" + media_id
+                + "/chunks/0?name=clip.mp4&mime=video%2Fmp4&size=8&count=1&chunk_size=4194304",
+                data=b"\0\0\0\x18ftyp", headers={"Content-Type": "video/mp4"},
+            )
+        self.assertEqual(response.status_code, 409)
+        payload = await response.get_json()
+        self.assertTrue(payload["reload_required"])
+        self.assertIn("새로고침", payload["message"])
+
     async def test_video_poster_is_saved_served_and_removed_with_draft(self):
         media_id = "11111111-1111-4111-8111-111111111111"
         poster = b"RIFF" + b"\0" * 4 + b"WEBP" + b"preview"
@@ -143,7 +161,8 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(media, "_write_target", writable), patch.object(media, "_blob") as write:
             response = await app.test_client().post(
                 "/api/media/posts/1/files/" + media_id + "/chunks/0?name=report.pdf&mime=application%2Foctet-stream&size="
-                + str(100 * 1024 * 1024 + 1) + "&count=134",
+                + str(100 * 1024 * 1024 + 1) + "&count=3&chunk_size="
+                + str(media.VIDEO_CHUNK_BYTES) + "&chunk_index=0&chunk_offset=0",
                 data=b"%PDF-", headers={"Content-Type": "application/octet-stream"},
             )
             self.assertEqual(response.status_code, 400)
@@ -313,7 +332,8 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(media, "_write_target", writable), patch.object(media, "_blob") as write:
             response = await app.test_client().post(
-                "/api/media/posts/1/files/" + media_id + "/chunks/0?name=report.pdf&mime=application%2Foctet-stream&size=5&count=1",
+                "/api/media/posts/1/files/" + media_id + "/chunks/0?name=report.pdf&mime=application%2Foctet-stream&size=5&count=1&chunk_size="
+                + str(media.VIDEO_CHUNK_BYTES) + "&chunk_index=0&chunk_offset=0",
                 data=b"hello", headers={"Content-Type": "application/octet-stream"},
             )
             self.assertEqual(response.status_code, 400)
