@@ -177,6 +177,65 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
                                           headers={"Content-Type": "video/mp4"})
             self.assertEqual(too_large.status_code, 400)
 
+    async def test_video_group_assembles_unsorted_staged_parts_without_mongo_sort(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        payload = b"\0\0\0\x18ftyp" + b"a" * 8 + b"b" * 16 + b"c" * 8
+
+        async def writable(kind, item_id):
+            return {"images": []}, None
+
+        class Uploads:
+            state = None
+
+            def find_one(self, query, projection=None):
+                return self.state
+
+            def update_one(self, query, changes, upsert=False):
+                if self.state is None:
+                    self.state = dict(changes.get("$setOnInsert", {}))
+                for key, value in changes.get("$set", {}).items():
+                    if key.startswith("chunks."):
+                        self.state.setdefault("chunks", {})[key.split(".", 1)[1]] = value
+                    else:
+                        self.state[key] = value
+                value = changes.get("$addToSet", {}).get("uploaded_chunks")
+                if value is not None and value not in self.state["uploaded_chunks"]:
+                    self.state["uploaded_chunks"].append(value)
+
+        class Parts:
+            documents = {}
+
+            def replace_one(self, query, document, upsert=False):
+                self.documents[document["_id"]] = document
+
+            def find(self, query):
+                return list(reversed([part for part in self.documents.values()
+                                      if part["upload_id"] == query["upload_id"]
+                                      and part["logical_index"] == query["logical_index"]]))
+
+            def delete_many(self, query):
+                self.documents = {key: part for key, part in self.documents.items()
+                                  if part["upload_id"] != query["upload_id"]
+                                  or part["logical_index"] != query["logical_index"]}
+
+        client = app.test_client()
+        async with client.session_transaction() as session:
+            session["user_id"] = 1
+        uploads, staged = Uploads(), Parts()
+        base = "/api/media/posts/9/videos/" + media_id
+        args = "?name=test.mp4&mime=video%2Fmp4&size=40&count=1&chunk_size=40&chunk_index=0&chunk_offset="
+        with patch.object(media, "_write_target", writable), patch.object(
+                media, "collection", side_effect=lambda name: staged if name == "media_upload_parts" else uploads), \
+                patch.object(media, "WIRE_CHUNK_BYTES", 16), patch.object(media, "VIDEO_CHUNK_BYTES", 40), \
+                patch.object(media, "_queued_blob", return_value="a" * 40) as write:
+            for index, offset in enumerate((0, 16, 32)):
+                response = await client.post(base + "/chunks/" + str(index) + args + str(offset),
+                                             data=payload[offset:offset + 16],
+                                             headers={"Content-Type": "video/mp4"})
+                self.assertEqual(response.status_code, 200)
+            self.assertEqual((await response.get_json())["uploaded_chunks"], [0])
+            write.assert_called_once_with(payload)
+
     async def test_general_file_limit_remains_100_mib(self):
         media_id = "11111111-1111-4111-8111-111111111111"
 

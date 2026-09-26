@@ -635,9 +635,9 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
             },
             "$set": {"expire_at": datetime.now(timezone.utc) + timedelta(hours=24)},
         }, upsert=True)
-        group_parts = await asyncio.to_thread(lambda: list(parts.find({
+        group_parts = await asyncio.to_thread(lambda: sorted(parts.find({
             "upload_id": key, "logical_index": logical_index,
-        }).sort("offset", 1)))
+        }), key=lambda part: part["offset"]))
         expected_part_count = math.ceil(group_size / WIRE_CHUNK_BYTES)
         if len(group_parts) == expected_part_count:
             if any(part["offset"] != part_index * WIRE_CHUNK_BYTES
