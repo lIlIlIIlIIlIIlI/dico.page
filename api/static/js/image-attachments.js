@@ -223,19 +223,6 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                 filename.textContent = entry.name;
                 filename.title = entry.name;
                 label.appendChild(filename);
-                if (entry.uploaded && options.kind && targetId) {
-                    const link = document.createElement('a');
-                    link.href = window.location.origin + '/media/' + options.kind + '/' + targetId + '/' + entry.id;
-                    link.className = 'block break-all text-xs text-primary hover:underline';
-                    link.textContent = link.href;
-                    link.target = '_blank';
-                    link.rel = 'noopener noreferrer';
-                    label.appendChild(link);
-                    const code = document.createElement('code');
-                    code.className = 'block break-all text-xs text-base-content/60';
-                    code.textContent = '[' + link.href + '](' + link.href + ') #[' + entry.id + ']';
-                    label.appendChild(code);
-                }
                 const state = document.createElement('span');
                 state.className = 'shrink-0 text-xs text-base-content/55';
                 state.textContent = entry.removed ? '삭제 중' : entry.uploaded ? '업로드 완료' : entry.failed ? '업로드 실패' : entry.uploading ? entry.progress || '업로드 중' : '준비 중';

@@ -37,7 +37,7 @@ content.setRangeText = function (text, start, end) {
 };
 let removedOnServer = false;
 const sandbox = {
-    window: {location: {origin: 'https://dico.page'}}, document: {createElement: element}, crypto: webcrypto, AbortController,
+    window: {}, document: {createElement: element}, crypto: webcrypto, AbortController,
     URL: {createObjectURL: () => 'blob:picture', revokeObjectURL() {}},
     fetch: async url => {
         if (url.includes('/remove/')) removedOnServer = true;
@@ -69,7 +69,8 @@ picker.listeners.change();
 
     assert.equal(selectors.get('[data-image-list]').children.length, 1);
     const row = selectors.get('[data-image-list]').children[0];
-    assert.equal(row.children[1].children[1].href, 'https://dico.page/media/posts/17/' + uploader.mediaForToken(marker).id);
+    assert.equal(row.children[1].children.length, 1);
+    assert.equal(row.children[1].children[0].textContent, 'picture.png');
     let buttons = selectors.get('[data-image-list]').children[0].children.filter(child => child.tagName === 'BUTTON');
     assert.deepEqual(buttons.map(button => button.textContent), ['본문에 삽입', '삭제']);
     content.selectionStart = content.selectionEnd = content.value.length;
