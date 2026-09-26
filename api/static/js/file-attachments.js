@@ -84,10 +84,59 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
                     const status = await statusResponse.json();
                     if (!statusResponse.ok || !status.success) throw new Error(status.message || '업로드 상태를 확인하지 못했습니다.');
                     if (status.complete) { entry.uploaded = true; render(); return; }
+                    if (status.total_size && status.total_size !== entry.file.size
+                        || status.mime_type && status.mime_type !== 'application/octet-stream'
+                        || status.chunk_size && status.chunk_size !== chunkSize) {
+                        throw new Error('이어올릴 파일의 정보가 기존 업로드와 다릅니다.');
+                    }
                     entry.completedChunks = new Set(status.uploaded_chunks || []);
                     const chunksPerLogical = Math.ceil(chunkSize / wireChunkSize);
                     const digest = window.DicoSha256.create();
-                    for (let logicalIndex = 0; logicalIndex < total; logicalIndex++) {
+                    let confirmed = status.protocol_version === 2 ? Number(status.uploaded_bytes || 0) : 0;
+                    const progress = (acknowledged, inFlight = 0, label = '업로드 중') => {
+                        const value = Math.min(99.9, (acknowledged + inFlight) / entry.file.size * 100);
+                        entry.displayPercent = Math.max(entry.displayPercent || 0, value);
+                        entry.progress = label + ' · ' + entry.displayPercent.toFixed(2) + '%';
+                        render();
+                    };
+                    if (status.protocol_version === 2) {
+                        if (!Number.isSafeInteger(confirmed) || confirmed < 0 || confirmed > entry.file.size) {
+                            throw new Error('이어올릴 업로드 위치가 올바르지 않습니다.');
+                        }
+                        for (let offset = 0; offset < confirmed; offset += wireChunkSize) {
+                            digest.update(new Uint8Array(await entry.file.slice(offset, Math.min(confirmed, offset + wireChunkSize)).arrayBuffer()));
+                        }
+                        progress(confirmed);
+                        let cursor = confirmed;
+                        while (cursor < entry.file.size) {
+                            const logicalIndex = Math.floor(cursor / chunkSize);
+                            const chunkOffset = cursor - logicalIndex * chunkSize;
+                            const wireSize = window.DicoMediaUpload?.chunkSize(entry.uploadRate) || wireChunkSize;
+                            const end = Math.min(entry.file.size, (logicalIndex + 1) * chunkSize, cursor + wireSize);
+                            const body = new Uint8Array(await entry.file.slice(cursor, end).arrayBuffer());
+                            const query = args + '&protocol=direct-v2&chunk_index=' + logicalIndex
+                                + '&chunk_offset=' + chunkOffset + '&wire_size=' + wireSize;
+                            const started = Date.now();
+                            let measured = false;
+                            const result = await send(base + '/chunks/' + cursor + query, body, csrfToken,
+                                'application/octet-stream', loaded => {
+                                    progress(cursor, Math.min(loaded, body.length), '전송 중');
+                                    const elapsed = (Date.now() - started) / 1000;
+                                    if (elapsed > 0.1 && loaded > 128 * 1024) {
+                                        const rate = loaded / elapsed;
+                                        entry.uploadRate = measured ? entry.uploadRate * 0.6 + rate * 0.4 : rate;
+                                        measured = true;
+                                    }
+                                    if (loaded >= body.length) progress(cursor, body.length, 'GitHub 저장 중');
+                                });
+                            if (result.uploaded_bytes !== end) {
+                                throw new Error('저장된 업로드 위치가 일치하지 않습니다. 새로고침 후 다시 시도해 주세요.');
+                            }
+                            digest.update(body);
+                            cursor = confirmed = end;
+                            progress(confirmed);
+                        }
+                    } else for (let logicalIndex = 0; logicalIndex < total; logicalIndex++) {
                         const groupStart = logicalIndex * chunkSize;
                         const groupSize = Math.min(chunkSize, entry.file.size - groupStart);
                         for (let offset = 0; offset < groupSize; offset += wireChunkSize) {
@@ -95,12 +144,13 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
                             const end = Math.min(groupStart + groupSize, start + wireChunkSize);
                             const body = new Uint8Array(await entry.file.slice(start, end).arrayBuffer());
                             digest.update(body);
-                            if (entry.completedChunks.has(logicalIndex)) continue;
+                            if (entry.completedChunks.has(logicalIndex)) { confirmed = end; progress(confirmed); continue; }
                             const index = logicalIndex * chunksPerLogical + offset / wireChunkSize;
                             const query = args + '&chunk_index=' + logicalIndex + '&chunk_offset=' + offset;
                             let result;
                             do {
-                                result = await send(base + '/chunks/' + index + query, body, csrfToken);
+                                result = await send(base + '/chunks/' + index + query, body, csrfToken,
+                                    'application/octet-stream', loaded => progress(confirmed, Math.min(loaded, body.length), '전송 중'));
                                 if (result.pending) {
                                     entry.progress = 'GitHub에 파일 조각 저장 중';
                                     render();
@@ -109,10 +159,12 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
                                 }
                             } while (result.pending);
                             entry.completedChunks = new Set(result.uploaded_chunks || entry.completedChunks);
+                            confirmed = end;
+                            progress(confirmed);
                         }
-                        entry.progress = '업로드 중 ' + Math.max(logicalIndex + 1, entry.completedChunks.size) + '/' + total;
-                        render();
+                        progress(confirmed);
                     }
+                    progress(confirmed, 0, 'GitHub에 게시 중');
                     await send(base + '/complete', JSON.stringify({sha256: digest.digest()}), csrfToken, 'application/json');
                     entry.uploaded = true;
                     render();
@@ -172,15 +224,18 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
         };
     }
 
-    async function send(url, body, csrfToken, mime = 'application/octet-stream') {
+    async function send(url, body, csrfToken, mime = 'application/octet-stream', onProgress) {
         for (let attempt = 1; attempt <= 8; attempt++) {
             let response;
             let data;
             try {
-                response = await fetch(url, {
+                const options = {
                     method: 'POST', body, credentials: 'same-origin',
                     headers: {'Content-Type': mime, 'X-CSRF-Token': csrfToken, 'Accept': 'application/json'}
-                });
+                };
+                response = window.DicoMediaUpload
+                    ? await window.DicoMediaUpload.post(url, body, options, onProgress)
+                    : await fetch(url, options);
                 try { data = await response.json(); } catch (_) { data = {}; }
             } catch (error) {
                 if (attempt === 8) throw error;

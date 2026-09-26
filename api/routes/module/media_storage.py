@@ -495,6 +495,8 @@ async def media_upload_status(kind, item_id, media_kind, media_id):
         abort(404)
     return jsonify({
         "success": True, "complete": False,
+        "protocol_version": (state or {}).get("protocol_version", 1 if state else 2),
+        "uploaded_bytes": (state or {}).get("next_offset", 0),
         "uploaded_chunks": sorted((state or {}).get("uploaded_chunks", [])),
         "chunk_count": (state or {}).get("chunk_count", 0),
         "chunk_size": (state or {}).get("chunk_size", 0),
@@ -605,6 +607,12 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
         valid_type = mime == "application/octet-stream" and os.path.splitext(name)[1].lower() in FILE_TYPES
         expected_logical_size = VIDEO_CHUNK_BYTES
         limit = MAX_FILE_BYTES
+    if request.args.get("protocol") == "direct-v2":
+        if (not valid_type or not 0 < size <= limit or chunk_size != expected_logical_size
+                or count != math.ceil(size / chunk_size) or not 0 <= logical_index < count):
+            return jsonify({"success": False, "message": "파일 형식 또는 크기가 올바르지 않습니다."}), 400
+        return await _upload_direct_chunk(kind, item_id, media_id, index, media_kind,
+                                          name, mime, size, count, chunk_size, logical_index, chunk_offset)
     chunks_per_logical = math.ceil(expected_logical_size / WIRE_CHUNK_BYTES)
     if (not valid_type or not 0 < size <= limit or chunk_size != expected_logical_size
             or count != math.ceil(size / chunk_size) or not 0 <= logical_index < count
@@ -707,6 +715,84 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
                     "uploaded_chunks": sorted(latest.get("uploaded_chunks", [])) if latest else []})
 
 
+async def _upload_direct_chunk(kind, item_id, media_id, index, media_kind,
+                               name, mime, size, count, chunk_size, logical_index, chunk_offset):
+    """Keep only blob references in Mongo; never stage file bytes there."""
+    group_start = logical_index * chunk_size
+    group_size = min(chunk_size, size - group_start)
+    offset = group_start + chunk_offset
+    try:
+        wire_size = int(request.args["wire_size"])
+    except (KeyError, ValueError):
+        return jsonify({"success": False, "message": "전송 조각 크기가 올바르지 않습니다."}), 400
+    if (index != offset or not 0 <= chunk_offset < group_size
+            or wire_size not in (1024 * 1024, 2 * 1024 * 1024, WIRE_CHUNK_BYTES)):
+        return jsonify({"success": False, "message": "전송 조각 위치가 올바르지 않습니다."}), 400
+    expected = min(wire_size, group_size - chunk_offset)
+    if request.content_length and request.content_length > WIRE_CHUNK_BYTES:
+        return jsonify({"success": False, "message": "전송 조각이 서버 요청 한도를 초과했습니다."}), 413
+    data = await request.get_data()
+    if len(data) != expected:
+        return jsonify({"success": False, "message": "전송 조각 크기가 올바르지 않습니다."}), 400
+    if offset == 0:
+        if media_kind == "file":
+            extension = os.path.splitext(name)[1].lower()
+            signatures = {".pdf": b"%PDF-", ".hwp": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"}
+            valid_signature = extension in {".txt", ".csv"} or data.startswith(signatures.get(extension, b"PK\x03\x04"))
+        else:
+            valid_signature = _signature(mime, data)
+        if not valid_signature:
+            return jsonify({"success": False, "message": "파일 형식이 올바르지 않습니다."}), 400
+    key = ("file:" if media_kind == "file" else "") + _upload_key(kind, item_id, media_id)
+    uploads = collection("media_uploads")
+    expires = datetime.now(timezone.utc) + timedelta(hours=24)
+    initial = {
+        "user_id": int(session["user_id"]), "uuid": media_id, "name": name,
+        "mime_type": mime, "total_size": size, "chunk_count": count,
+        "chunk_size": chunk_size, "protocol_version": 2, "next_offset": 0,
+        "parts": [], "uploaded_chunks": [], "sha256": None, "expire_at": expires,
+    }
+    try:
+        await asyncio.to_thread(uploads.update_one, {"_id": key}, {"$setOnInsert": initial}, upsert=True)
+        state = await asyncio.to_thread(uploads.find_one, {"_id": key})
+        if (state.get("protocol_version") != 2 or int(state.get("user_id", -1)) != int(session["user_id"])
+                or state.get("name") != name or state.get("mime_type") != mime
+                or state.get("total_size") != size or state.get("chunk_count") != count
+                or state.get("chunk_size") != chunk_size):
+            return jsonify({"success": False, "message": "업로드 정보가 서로 다릅니다. 상태를 다시 확인해 주세요."}), 409
+        next_offset = state.get("next_offset", 0)
+        checksum = hashlib.sha256(data).hexdigest()
+        if offset < next_offset:
+            existing = next((part for part in state.get("parts", []) if part["offset"] == offset), None)
+            if existing and existing["size"] == len(data) and existing["sha256"] == checksum:
+                return jsonify({"success": True, "uploaded_bytes": next_offset,
+                                "uploaded_chunks": state.get("uploaded_chunks", [])})
+            return jsonify({"success": False, "message": "이미 저장된 조각의 내용이 다릅니다."}), 409
+        if offset != next_offset:
+            return jsonify({"success": False, "message": "앞선 조각이 아직 저장되지 않았습니다.",
+                            "uploaded_bytes": next_offset}), 409
+        sha = await asyncio.to_thread(_queued_blob, data)
+        new_offset = offset + len(data)
+        completed = list(range(min(count, new_offset // chunk_size)))
+        if new_offset == size:
+            completed = list(range(count))
+        result = await asyncio.to_thread(uploads.update_one, {"_id": key, "next_offset": offset}, {
+            "$push": {"parts": {"offset": offset, "size": len(data), "sha": sha, "sha256": checksum}},
+            "$set": {"next_offset": new_offset, "uploaded_chunks": completed, "expire_at": expires},
+        })
+        if not result.modified_count:
+            return jsonify({"success": False, "message": "다른 창에서 업로드 상태가 변경되었습니다. 다시 확인해 주세요."}), 409
+    except DuplicateKeyError:
+        return jsonify({"success": False, "message": "업로드 상태가 변경되었습니다. 다시 시도해 주세요."}), 409
+    except MediaRateLimitError as exc:
+        return jsonify({"success": False, "message": str(exc), "retry_after": exc.retry_after}), 429, {"Retry-After": str(math.ceil(exc.retry_after))}
+    except MediaValidationError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 422
+    except MediaStorageError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 502
+    return jsonify({"success": True, "uploaded_bytes": new_offset, "uploaded_chunks": completed})
+
+
 @media_bp.post("/api/media/<kind>/<int:item_id>/videos/<media_id>/complete")
 async def complete_video(kind, item_id, media_id):
     return await _complete_chunks(kind, item_id, media_id, "video")
@@ -737,11 +823,23 @@ async def _complete_chunks(kind, item_id, media_id, media_kind):
     chunks = state.get("chunks", {})
     count = state["chunk_count"]
     size = state["total_size"]
-    parts = [chunks.get(str(index)) for index in range(count)]
-    if any(part is None for part in parts):
-        return jsonify({"success": False, "message": "누락된 업로드 조각이 있습니다."}), 409
-    if sorted(state.get("uploaded_chunks", [])) != list(range(count)) or sum(part["size"] for part in parts) != size:
-        return jsonify({"success": False, "message": "업로드 전송이 아직 끝나지 않았습니다."}), 409
+    if state.get("protocol_version") == 2:
+        parts = state.get("parts", [])
+        position = 0
+        for part in parts:
+            if part.get("offset") != position or not 0 < part.get("size", 0) <= WIRE_CHUNK_BYTES:
+                return jsonify({"success": False, "message": "업로드 조각 순서가 올바르지 않습니다."}), 409
+            position += part["size"]
+        if position != size or state.get("next_offset") != size:
+            return jsonify({"success": False, "message": "업로드 전송이 아직 끝나지 않았습니다."}), 409
+        stored_parts = parts
+    else:
+        parts = [chunks.get(str(index)) for index in range(count)]
+        if any(part is None for part in parts):
+            return jsonify({"success": False, "message": "누락된 업로드 조각이 있습니다."}), 409
+        if sorted(state.get("uploaded_chunks", [])) != list(range(count)) or sum(part["size"] for part in parts) != size:
+            return jsonify({"success": False, "message": "업로드 전송이 아직 끝나지 않았습니다."}), 409
+        stored_parts = [blob for part in parts for blob in part.get("blobs", [part])]
     try:
         payload = await request.get_json(silent=True)
         payload = payload if isinstance(payload, dict) else {}
@@ -753,7 +851,6 @@ async def _complete_chunks(kind, item_id, media_id, media_kind):
         return jsonify({"success": False, "message": str(exc)}), 400
     directory = {"image": "이미지/", "video": "영상/", "file": "첨부파일/"}[media_kind]
     prefix = _folder(kind) + "/" + str(item_id) + "/" + directory + media_id + "/"
-    stored_parts = [blob for part in parts for blob in part.get("blobs", [part])]
     files = [(prefix + str(index).zfill(4) + ".part", part["sha"])
              for index, part in enumerate(stored_parts)]
     try:

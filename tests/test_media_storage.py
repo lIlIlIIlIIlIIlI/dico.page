@@ -11,6 +11,75 @@ from api.routes.module import media_storage as media
 
 
 class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_direct_upload_persists_only_blob_references_and_resumes(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        payload = b"a" * (1024 * 1024) + b"last"
+
+        async def writable(kind, item_id):
+            return {"images": [], "files": []}, None
+
+        class Uploads:
+            state = None
+
+            def find_one(self, query, projection=None):
+                return self.state
+
+            def update_one(self, query, update, upsert=False):
+                if self.state is None:
+                    self.state = dict(update["$setOnInsert"])
+                    self.state["_id"] = query["_id"]
+                elif "next_offset" in query and query["next_offset"] != self.state["next_offset"]:
+                    return type("Result", (), {"modified_count": 0})()
+                for key, value in update.get("$set", {}).items():
+                    self.state[key] = value
+                self.state["parts"].extend(update.get("$push", {}).values())
+                return type("Result", (), {"modified_count": 1})()
+
+            def delete_one(self, query):
+                self.state = None
+
+        class Staged:
+            def delete_many(self, query):
+                return None
+
+        uploads = Uploads()
+        blobs = []
+
+        def save_blob(data):
+            blobs.append(data)
+            return str(len(blobs)) * 40
+
+        client = app.test_client()
+        async with client.session_transaction() as user_session:
+            user_session["user_id"] = 1
+        base = "/api/media/posts/9/files/" + media_id
+        args = ("?protocol=direct-v2&name=sample.txt&mime=application%2Foctet-stream"
+                + "&size=" + str(len(payload)) + "&count=1&chunk_size=" + str(media.VIDEO_CHUNK_BYTES)
+                + "&chunk_index=0&wire_size=1048576&chunk_offset=")
+        with patch.object(media, "_write_target", writable), patch.object(
+                media, "collection", side_effect=lambda name: Staged() if name == "media_upload_parts" else uploads), \
+                patch.object(media, "_queued_blob", side_effect=save_blob), \
+                patch.object(media, "_commit_blobs") as commit, \
+                patch.object(media, "_save_attachment", return_value=True) as save:
+            first = await client.post(base + "/chunks/0" + args + "0", data=payload[:1024 * 1024])
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual((await first.get_json())["uploaded_bytes"], 1024 * 1024)
+            status = await client.get(base + "/status")
+            self.assertEqual((await status.get_json())["protocol_version"], 2)
+            self.assertEqual((await status.get_json())["uploaded_bytes"], 1024 * 1024)
+            duplicate = await client.post(base + "/chunks/0" + args + "0", data=payload[:1024 * 1024])
+            self.assertEqual(duplicate.status_code, 200)
+            self.assertEqual(len(blobs), 1)
+            tail = await client.post(base + "/chunks/1048576" + args + "1048576", data=b"last")
+            self.assertEqual(tail.status_code, 200)
+            self.assertEqual(uploads.state["next_offset"], len(payload))
+            self.assertNotIn("data", uploads.state["parts"][0])
+            finished = await client.post(base + "/complete", json={"sha256": hashlib.sha256(payload).hexdigest()})
+            self.assertEqual(finished.status_code, 200)
+            self.assertEqual(len(blobs), 2)
+            self.assertEqual(len(commit.call_args.args[0]), 2)
+            self.assertEqual(save.call_args.args[2]["chunks"][1]["offset"], 1024 * 1024)
+
     async def test_primary_failover_returns_a_retryable_upload_response(self):
         async def unavailable(kind, item_id):
             raise ServerSelectionTimeoutError("No primary available for writes")
