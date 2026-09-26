@@ -1,6 +1,7 @@
 window.DicoImageAttachments = window.DicoImageAttachments || (() => {
     const chunkSize = 768 * 1024;
-    const maxVideo = 200 * 1024 * 1024;
+    const videoChunkSize = 4 * 1024 * 1024;
+    const maxVideo = 10 * 1024 ** 3;
     const maxOriginalImage = 8 * 1024 * 1024;
     const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
     const videoTypes = new Set(['video/mp4', 'video/webm', 'video/ogg']);
@@ -54,22 +55,38 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
         });
     }
 
-    async function send(url, body, mime, csrfToken, signal) {
-        const response = await fetch(url, {
-            method: 'POST',
-            body,
-            credentials: 'same-origin',
-            headers: {'Content-Type': mime, 'X-CSRF-Token': csrfToken, 'Accept': 'application/json'},
-            signal
-        });
-        let data;
-        try { data = await response.json(); } catch (_) { data = {}; }
-        if (!response.ok || !data.success) {
-            throw new Error(data.message || (response.status === 413
-                ? '파일 크기가 서버 제한을 초과했습니다.'
-                : '파일을 저장하지 못했습니다. 다시 시도해 주세요.'));
+    async function send(url, body, mime, csrfToken, signal, onRateLimit) {
+        while (true) {
+            const response = await fetch(url, {
+                method: 'POST',
+                body,
+                credentials: 'same-origin',
+                headers: {'Content-Type': mime, 'X-CSRF-Token': csrfToken, 'Accept': 'application/json'},
+                signal
+            });
+            let data;
+            try { data = await response.json(); } catch (_) { data = {}; }
+            if (response.status === 429 && Number.isFinite(data.retry_after)) {
+                const seconds = Math.min(3600, Math.max(1, data.retry_after));
+                onRateLimit?.(seconds);
+                await new Promise((resolve, reject) => {
+                    const cancel = () => { clearTimeout(timer); reject(new Error('업로드가 취소되었습니다.')); };
+                    const timer = setTimeout(() => {
+                        signal?.removeEventListener('abort', cancel);
+                        resolve();
+                    }, seconds * 1000);
+                    if (signal?.aborted) cancel();
+                    else signal?.addEventListener('abort', cancel, {once: true});
+                });
+                continue;
+            }
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || (response.status === 413
+                    ? '파일 크기가 서버 제한을 초과했습니다.'
+                    : '파일을 저장하지 못했습니다. 다시 시도해 주세요.'));
+            }
+            return data;
         }
-        return data;
     }
 
     function mount(form, options = {}) {
@@ -256,7 +273,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
 
         async function prepare(file) {
             if (videoTypes.has(file.type)) {
-                if (!file.size || file.size > maxVideo) throw new Error((file.name || '이미지') + ': 영상은 200MB 이하로 올려 주세요.');
+                if (!file.size || file.size > maxVideo) throw new Error((file.name || '영상') + ': 영상은 10GB 이하로 올려 주세요.');
                 return file;
             }
             if (!imageTypes.has(file.type)) throw new Error((file.name || '이미지') + ': PNG, JPG, WebP, GIF 또는 MP4, WebM, OGG만 지원합니다.');
@@ -363,14 +380,17 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                     announce(entry.name + ' 업로드 중…');
                     await send(base + '/images/' + entry.id + '?name=' + name, entry.file, mime, token, entry.controller.signal);
                 } else {
-                    const total = Math.ceil(entry.file.size / chunkSize);
+                    const total = Math.ceil(entry.file.size / videoChunkSize);
                     const args = '?name=' + name + '&mime=' + encodeURIComponent(mime)
-                        + '&size=' + entry.file.size + '&count=' + total;
+                        + '&size=' + entry.file.size + '&count=' + total + '&chunk_size=' + videoChunkSize;
                     const uploadChunk = async index => {
                         if (stopped || entry.removed) return;
                         await send(base + '/videos/' + entry.id + '/chunks/' + index + args,
-                            entry.file.slice(index * chunkSize, Math.min(entry.file.size, (index + 1) * chunkSize)),
-                            mime, token, entry.controller.signal);
+                            entry.file.slice(index * videoChunkSize, Math.min(entry.file.size, (index + 1) * videoChunkSize)),
+                            mime, token, entry.controller.signal, seconds => {
+                                entry.progress = 'GitHub 요청 제한 · ' + seconds + '초 후 재시도';
+                                render();
+                            });
                         entry.completedChunks.add(index);
                         entry.progress = '업로드 중 ' + entry.completedChunks.size + '/' + total;
                         render();
@@ -381,7 +401,8 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                     await window.DicoUploadQueue.run(remaining, 3, uploadChunk);
                     if (!entry.removed) {
                         const poster = await entry.posterPromise;
-                        await send(base + '/videos/' + entry.id + '/complete', JSON.stringify({poster}), 'application/json', token, entry.controller.signal);
+                        await send(base + '/videos/' + entry.id + '/complete', JSON.stringify({poster}), 'application/json', token, entry.controller.signal,
+                            seconds => { entry.progress = 'GitHub 요청 제한 · ' + seconds + '초 후 재시도'; render(); });
                     }
                 }
                 if (!entry.removed) entry.uploaded = true;
