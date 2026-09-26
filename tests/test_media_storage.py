@@ -5,11 +5,23 @@ from threading import Barrier
 from unittest.mock import patch
 
 import httpx
+from pymongo.errors import ServerSelectionTimeoutError
 from api.index import app
 from api.routes.module import media_storage as media
 
 
 class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_primary_failover_returns_a_retryable_upload_response(self):
+        async def unavailable(kind, item_id):
+            raise ServerSelectionTimeoutError("No primary available for writes")
+
+        with patch.object(media, "_write_target", unavailable):
+            response = await app.test_client().post(
+                "/api/media/posts/36/videos/58473398-afca-4ae7-a1b6-3b2472f411fe/chunks/174")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["Retry-After"], "5")
+        self.assertEqual((await response.get_json())["retry_after"], 5)
+
     async def test_upload_status_accepts_the_plural_routes_used_by_the_picker(self):
         media_id = "11111111-1111-4111-8111-111111111111"
         checked_keys = []
