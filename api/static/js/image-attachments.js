@@ -68,23 +68,68 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                 && line.trim() === '#[' + entry.name + ']');
         }
 
-        function insertVideo(entry) {
+        function markerFor(entry) {
+            return videoTypes.has(entry.file.type)
+                ? '#[' + entry.name + ']'
+                : '![' + entry.name + '](dico-image:' + entry.id + ')';
+        }
+
+        function mediaForToken(line) {
+            return files.find(entry => !entry.removed && line.trim() === markerFor(entry));
+        }
+
+        function mediaForPreviewHeading(text) {
+            const video = videoForToken('#' + text);
+            if (video) return video;
+            const match = /^\[DICO-IMAGE-([0-9a-f-]{36})\]$/.exec(text);
+            return match && files.find(entry => !entry.removed && imageTypes.has(entry.file.type) && entry.id === match[1]);
+        }
+
+        function previewText() {
+            let fence = null;
+            return contentInput.value.replace(/\r\n?/g, '\n').split('\n').map(line => {
+                const trimmed = line.trim();
+                if (!fence && /^(`{3,}|~{3,})(.*?)\1$/.test(trimmed)) return line;
+                const marker = trimmed.match(/^(`{3,}|~{3,})/);
+                if (marker) {
+                    fence = fence === marker[1] ? null : marker[1];
+                    return line;
+                }
+                const entry = !fence && mediaForToken(line);
+                return entry && imageTypes.has(entry.file.type) ? '#[DICO-IMAGE-' + entry.id + ']' : line;
+            }).join('\n');
+        }
+
+        function insertMedia(entry) {
             if (!contentInput) return;
-            const marker = '#[' + entry.name + ']';
-            const start = contentInput.selectionStart;
-            const end = contentInput.selectionEnd;
-            const before = contentInput.value.slice(0, start);
-            const after = contentInput.value.slice(end);
+            const marker = markerFor(entry);
+            let text = contentInput.value;
+            let start = contentInput.selectionStart;
+            let end = contentInput.selectionEnd;
+            let offset = 0;
+            const locations = [];
+            for (const line of text.split('\n')) {
+                if (line.trim() === marker) locations.push([offset, offset + line.length]);
+                offset += line.length + 1;
+            }
+            for (const [from, to] of locations.reverse()) {
+                text = text.slice(0, from) + text.slice(to);
+                start = start > to ? start - (to - from) : Math.min(start, from);
+                end = end > to ? end - (to - from) : Math.min(end, from);
+            }
+            const before = text.slice(0, start);
+            const after = text.slice(end);
             const insert = (before && !before.endsWith('\n\n') ? before.endsWith('\n') ? '\n' : '\n\n' : '')
                 + marker + (after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n');
-            if (contentInput.value.length - (end - start) + insert.length > contentInput.maxLength) {
+            if (text.length - (end - start) + insert.length > contentInput.maxLength) {
                 announce('본문 글자 수 제한을 초과했습니다.', true);
                 return;
             }
+            contentInput.value = text;
             contentInput.setRangeText(insert, start, end, 'end');
             changed();
             contentInput.focus();
-            announce(entry.name + ' 영상 위치를 본문에 표시했습니다. 원하는 줄로 옮길 수 있습니다.');
+            announce(entry.name + ' 위치를 본문에 표시했습니다. 원하는 줄로 옮길 수 있습니다.');
         }
 
         function render() {
@@ -130,9 +175,9 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         }
                         URL.revokeObjectURL(entry.previewUrl);
                         files = files.filter(item => item !== entry);
-                        if (contentInput && videoTypes.has(entry.file.type)
-                            && !files.some(item => item.name === entry.name && videoTypes.has(item.file.type))) {
-                            const marker = '#[' + entry.name + ']';
+                        if (contentInput && (imageTypes.has(entry.file.type)
+                            || !files.some(item => item.name === entry.name && videoTypes.has(item.file.type)))) {
+                            const marker = markerFor(entry);
                             contentInput.value = contentInput.value.split('\n')
                                 .filter(line => line.trim() !== marker).join('\n');
                         }
@@ -146,37 +191,17 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                     });
                 });
                 item.append(label, state);
-                if (videoTypes.has(entry.file.type) && contentInput) {
+                if (contentInput) {
                     const insert = document.createElement('button');
                     insert.type = 'button';
                     insert.className = 'btn btn-ghost btn-xs shrink-0 text-primary';
                     insert.textContent = '본문에 삽입';
                     insert.disabled = locked || entry.removed;
-                    insert.addEventListener('click', () => insertVideo(entry));
+                    insert.addEventListener('click', () => insertMedia(entry));
                     item.appendChild(insert);
                 }
-                const view = document.createElement('button');
-                view.type = 'button';
-                view.className = 'btn btn-ghost btn-xs shrink-0';
-                view.textContent = entry.expanded ? '닫기' : '미리보기';
-                view.addEventListener('click', () => { entry.expanded = !entry.expanded; render(); });
-                item.append(view, remove);
+                item.appendChild(remove);
                 list.appendChild(item);
-                if (entry.expanded) {
-                    const frame = document.createElement('li');
-                    frame.className = 'overflow-hidden rounded-lg border border-base-200 bg-base-100 p-2';
-                    const media = document.createElement(videoTypes.has(entry.file.type) ? 'video' : 'img');
-                    media.src = entry.previewUrl;
-                    media.className = 'max-h-96 w-full rounded object-contain';
-                    if (media.tagName === 'VIDEO') {
-                        media.controls = true;
-                        media.preload = 'metadata';
-                        media.playsInline = true;
-                        media.setAttribute('data-dico-player', '');
-                    } else media.alt = entry.name;
-                    frame.appendChild(media);
-                    list.appendChild(frame);
-                }
             });
         }
 
@@ -226,8 +251,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         });
                         const entry = files[files.length - 1];
                         render();
-                        if (videoTypes.has(file.type)) insertVideo(entry);
-                        else changed();
+                        insertMedia(entry);
                         if (options.ensureDraft) {
                             entry.task = track(pool.add(async () => {
                                 if (stopped || entry.removed) return;
@@ -373,6 +397,9 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
         return {
             ready,
             videoForToken,
+            mediaForToken,
+            mediaForPreviewHeading,
+            previewText,
             videos: () => files.filter(entry => !entry.removed && videoTypes.has(entry.file.type)),
             hasFiles: () => files.length > 0,
             stop: () => {
