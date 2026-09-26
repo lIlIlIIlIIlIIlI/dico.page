@@ -1,0 +1,7 @@
+{% macro avatar(person, size='size-10', fallback='bg-primary/10 text-primary') %}
+{% if person.user_uid %}<a href="{{ url_for('home.user_profile', user_uid=person.user_uid) }}" aria-label="{{ person.author_nickname }}님의 프로필" class="flex {{ size }} shrink-0 items-center justify-center overflow-hidden rounded-full font-bold {{ fallback }}">{% else %}<span class="flex {{ size }} shrink-0 items-center justify-center overflow-hidden rounded-full font-bold {{ fallback }}">{% endif %}{% if person.avatar_url %}<img src="{{ person.avatar_url }}" alt="" class="size-full object-cover">{% else %}{{ person.author_nickname | first }}{% endif %}{% if person.user_uid %}</a>{% else %}</span>{% endif %}
+{% endmacro %}
+
+{% macro name(person, classes='font-semibold') %}
+{% if person.user_uid %}<a href="{{ url_for('home.user_profile', user_uid=person.user_uid) }}" class="{{ classes }} hover:text-primary hover:underline">{{ person.author_nickname }}</a>{% else %}<span class="{{ classes }}">{{ person.author_nickname }}</span>{% endif %}
+{% endmacro %}

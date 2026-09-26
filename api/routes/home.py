@@ -16,7 +16,7 @@ except ImportError:
     bleach = None
     markdown_module = None
 
-from quart import Blueprint, abort, current_app, jsonify, redirect, render_template, request, session, url_for
+from quart import Blueprint, Response, abort, current_app, jsonify, redirect, render_template, request, session, url_for
 
 from .module.auth import ensure_database, login_required, validate_csrf_token
 from .module.notifications import create_notification, get_notices_sync
@@ -263,6 +263,26 @@ def _publish_post_draft_sync(draft_id, title, content, category, author_id, nick
     return post_id
 
 
+def _author_profiles_sync(author_ids):
+    ids = [int(author_id) for author_id in author_ids if author_id is not None]
+    if not ids:
+        return {}
+    profiles = {author_id: {"avatar_url": "", "user_uid": ""} for author_id in ids}
+    for user in collection("users").find(
+        {"id": {"$in": ids}}, {"_id": 0, "id": 1, "user_uid": 1}
+    ):
+        profiles[int(user["id"])]["user_uid"] = user.get("user_uid", "") or ""
+    for profile in collection("user_profiles").find(
+        {"user_id": {"$in": ids}}, {"_id": 0, "user_id": 1, "avatar_url": 1, "updated_at": 1}
+    ):
+        if profile.get("avatar_url"):
+            user_id = int(profile["user_id"])
+            profiles[user_id]["avatar_url"] = url_for(
+                "home.avatar_image", user_id=user_id, v=profile.get("updated_at") or "0"
+            )
+    return profiles
+
+
 def _get_post_sync(post_id, current_user_id=None):
     posts_collection = collection("posts")
     row = posts_collection.find_one_and_update(
@@ -276,6 +296,10 @@ def _get_post_sync(post_id, current_user_id=None):
     comments = list(collection("comments").find(
         {"post_id": int(post_id)}, {"_id": 0, "id": 1, "author_id": 1, "author_nickname": 1, "content": 1, "created_at": 1}
     ).sort("id", 1))
+    profiles = _author_profiles_sync({row["author_id"], *(comment["author_id"] for comment in comments)})
+    row.update(profiles.get(row["author_id"], {}))
+    for comment in comments:
+        comment.update(profiles.get(comment["author_id"], {}))
     liked = bool(current_user_id is not None and collection("post_likes").find_one({"post_id": int(post_id), "user_id": int(current_user_id)}))
     return row, comments, liked
 
@@ -295,6 +319,7 @@ def _create_comment_sync(post_id, user_id, nickname, content):
     # 이 값을 그대로 Quart jsonify()에 넘기면 ObjectId가 JSON으로 직렬화되지
     # 않으므로, 저장용 딕셔너리와 API 응답용 딕셔너리를 분리합니다.
     collection("comments").insert_one(dict(comment))
+    comment.update(_author_profiles_sync({user_id}).get(user_id, {}))
     return comment
 
 
@@ -951,6 +976,26 @@ async def post_detail(post_id):
         liked=liked,
         category_name=POST_CATEGORIES.get(post["category"], "자유"),
     )
+
+
+@home_bp.get("/avatars/<int:user_id>")
+async def avatar_image(user_id):
+    await ensure_database()
+    profile = await asyncio.to_thread(
+        lambda: collection("user_profiles").find_one(
+            {"user_id": user_id}, {"_id": 0, "avatar_url": 1}
+        )
+    )
+    value = (profile or {}).get("avatar_url") or ""
+    try:
+        _validate_avatar_data(value)
+    except ValueError:
+        abort(404)
+    mime, encoded = value.split(";base64,", 1)
+    response = Response(base64.b64decode(encoded), content_type=mime.removeprefix("data:"))
+    response.headers["Cache-Control"] = "public, max-age=300"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @home_bp.post("/posts/<int:post_id>/comments")
