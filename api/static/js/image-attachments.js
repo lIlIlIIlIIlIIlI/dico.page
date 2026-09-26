@@ -5,6 +5,55 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
     const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
     const videoTypes = new Set(['video/mp4', 'video/webm', 'video/ogg']);
 
+    function videoPoster(entry) {
+        const video = document.createElement('video');
+        const canvas = document.createElement('canvas');
+        if (!video.canPlayType || !canvas.toBlob || !window.FileReader) return Promise.resolve(null);
+        return new Promise(resolve => {
+            let settled = false;
+            let capturing = false;
+            const finish = value => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                video.removeAttribute('src');
+                video.load();
+                resolve(value);
+            };
+            const capture = () => {
+                if (settled || capturing || !video.videoWidth || !video.videoHeight) return;
+                capturing = true;
+                try {
+                    const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
+                    canvas.width = Math.round(video.videoWidth * scale);
+                    canvas.height = Math.round(video.videoHeight * scale);
+                    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+                    canvas.toBlob(blob => {
+                        if (!blob || blob.type !== 'image/webp' || blob.size > 128 * 1024) return finish(null);
+                        const reader = new FileReader();
+                        reader.onload = () => finish(reader.result);
+                        reader.onerror = () => finish(null);
+                        reader.readAsDataURL(blob);
+                    }, 'image/webp', 0.65);
+                } catch (_) { finish(null); }
+            };
+            const timer = setTimeout(() => finish(null), 8000);
+            video.muted = true;
+            video.preload = 'auto';
+            video.playsInline = true;
+            video.addEventListener('loadedmetadata', () => {
+                if (Number.isFinite(video.duration) && video.duration > 0) {
+                    try { video.currentTime = Math.min(0.5, video.duration / 4); } catch (_) { capture(); }
+                }
+            }, {once: true});
+            video.addEventListener('loadeddata', () => { if (!video.seeking) capture(); }, {once: true});
+            video.addEventListener('seeked', capture, {once: true});
+            video.addEventListener('error', () => finish(null), {once: true});
+            video.src = entry.previewUrl;
+            try { video.load(); } catch (_) { finish(null); }
+        });
+    }
+
     async function send(url, body, mime, csrfToken, signal) {
         const response = await fetch(url, {
             method: 'POST',
@@ -138,9 +187,9 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
             files.forEach((entry) => {
                 const item = document.createElement('li');
                 item.className = 'flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-base-200 bg-base-200/30 p-2 sm:flex-nowrap';
-                if (imageTypes.has(entry.file.type)) {
+                if (imageTypes.has(entry.file.type) || entry.posterData) {
                     const thumb = document.createElement('img');
-                    thumb.src = entry.previewUrl;
+                    thumb.src = entry.posterData || entry.previewUrl;
                     thumb.alt = '';
                     thumb.className = 'size-10 shrink-0 rounded object-cover';
                     item.appendChild(thumb);
@@ -252,6 +301,16 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         const entry = files[files.length - 1];
                         render();
                         insertMedia(entry);
+                        if (videoTypes.has(file.type)) {
+                            entry.posterPromise = videoPoster(entry).then(data => {
+                                if (!entry.removed && !stopped && data) {
+                                    entry.posterData = data;
+                                    render();
+                                    changed();
+                                }
+                                return data;
+                            }).catch(() => null);
+                        }
                         if (options.ensureDraft) {
                             entry.task = track(pool.add(async () => {
                                 if (stopped || entry.removed) return;
@@ -320,7 +379,10 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                     const remaining = Array.from({length: total - 1}, (_, index) => index + 1)
                         .filter(index => !entry.completedChunks.has(index));
                     await window.DicoUploadQueue.run(remaining, 3, uploadChunk);
-                    if (!entry.removed) await send(base + '/videos/' + entry.id + '/complete', '{}', 'application/json', token, entry.controller.signal);
+                    if (!entry.removed) {
+                        const poster = await entry.posterPromise;
+                        await send(base + '/videos/' + entry.id + '/complete', JSON.stringify({poster}), 'application/json', token, entry.controller.signal);
+                    }
                 }
                 if (!entry.removed) entry.uploaded = true;
             } finally {

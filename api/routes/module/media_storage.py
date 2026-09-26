@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import binascii
 import json
 import math
 import os
@@ -20,6 +21,7 @@ from .auth import ensure_database, get_current_user, validate_csrf_token
 media_bp = Blueprint("media", __name__)
 REPOSITORY = "dico-page/postimage"
 CHUNK_BYTES = 768 * 1024
+POSTER_BYTES = 128 * 1024
 PLAYBACK_READ_CONCURRENCY = 4
 MAX_PLAYBACK_RANGE_BYTES = 200 * 1024 * 1024
 MAX_VIDEO_BYTES = 200 * 1024 * 1024
@@ -175,6 +177,20 @@ def _signature(mime, data):
     }.get(mime, False)
 
 
+def _poster_data(value):
+    if not value:
+        return None
+    if not isinstance(value, str) or not value.startswith("data:image/webp;base64,") or len(value) > 180000:
+        raise ValueError("영상 미리보기 형식이 올바르지 않습니다.")
+    try:
+        data = base64.b64decode(value.split(",", 1)[1], validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("영상 미리보기 형식이 올바르지 않습니다.") from exc
+    if not 0 < len(data) <= POSTER_BYTES or not _signature("image/webp", data):
+        raise ValueError("영상 미리보기 형식이 올바르지 않습니다.")
+    return data
+
+
 def _folder(kind):
     return "게시글" if kind == "posts" else "공지"
 
@@ -202,8 +218,11 @@ def _media_paths(kind, item_id, media):
     if media["kind"] == "image":
         return [prefix + "이미지/" + media["id"] + "." + IMAGE_TYPES[media["mime"]]]
     directory = "영상/" if media["kind"] == "video" else "첨부파일/"
-    return [prefix + directory + media["id"] + "/" + str(index).zfill(4) + ".part"
-            for index in range(len(media["chunks"]))]
+    paths = [prefix + directory + media["id"] + "/" + str(index).zfill(4) + ".part"
+             for index in range(len(media["chunks"]))]
+    if media["kind"] == "video" and media.get("poster"):
+        paths.append(prefix + directory + media["id"] + "/poster.webp")
+    return paths
 
 
 def _discard_untracked_media(kind, item_id, media):
@@ -476,14 +495,25 @@ async def _complete_chunks(kind, item_id, media_id, media_kind):
     parts = [chunks.get(str(index)) for index in range(state["count"])]
     if any(part is None for part in parts):
         return jsonify({"success": False, "message": "누락된 영상 조각이 있습니다."}), 409
+    try:
+        payload = await request.get_json(silent=True) if media_kind == "video" else None
+        poster_data = _poster_data(payload.get("poster")) if isinstance(payload, dict) else None
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
     prefix = _folder(kind) + "/" + str(item_id) + ("/영상/" if media_kind == "video" else "/첨부파일/") + media_id + "/"
     files = [(prefix + str(index).zfill(4) + ".part", part["sha"]) for index, part in enumerate(parts)]
     try:
+        poster = None
+        if poster_data:
+            poster = {"sha": await asyncio.to_thread(_blob, poster_data), "size": len(poster_data)}
+            files.append((prefix + "poster.webp", poster["sha"]))
         await asyncio.to_thread(_commit_blobs, files, "Upload video " + prefix)
         media = {
             "id": media_id, "name": state["name"], "kind": media_kind, "mime": state["mime"],
             "size": state["size"], "chunks": parts,
         }
+        if poster:
+            media["poster"] = poster
         saved = await asyncio.to_thread(_save_attachment, kind, item_id, media, field)
     except MediaStorageError as exc:
         return jsonify({"success": False, "message": str(exc)}), 502
@@ -508,19 +538,22 @@ async def serve_media(kind, item_id, media_id):
     media = next((item for field in ("images", "files") for item in (doc or {}).get(field, []) if item.get("id") == media_id), None)
     if not media:
         abort(404)
-    size = media["size"]
+    is_poster = request.args.get("poster") == "1"
+    if is_poster and (media["kind"] != "video" or not media.get("poster")):
+        abort(404)
+    size = media["poster"]["size"] if is_poster else media["size"]
     headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, no-store" if doc.get("draft_state") else "public, max-age=3600", "X-Content-Type-Options": "nosniff"}
-    download = media["kind"] == "file" or request.args.get("download") == "1"
+    download = not is_poster and (media["kind"] == "file" or request.args.get("download") == "1")
     if download:
         headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + quote(media.get("name") or "attachment", safe="")
-    content_type = "application/octet-stream" if media["kind"] == "file" else media["mime"]
+    content_type = "image/webp" if is_poster else "application/octet-stream" if media["kind"] == "file" else media["mime"]
     if request.method == "HEAD":
         response = Response(b"", status=200, headers=headers, content_type=content_type)
         response.content_length = size
         return response
-    if media["kind"] == "image":
+    if is_poster or media["kind"] == "image":
         try:
-            data = await asyncio.to_thread(_read_blob, media["sha"])
+            data = await asyncio.to_thread(_read_blob, media["poster"]["sha"] if is_poster else media["sha"])
         except MediaStorageError:
             abort(502)
         if len(data) != size:

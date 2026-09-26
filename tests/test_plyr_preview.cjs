@@ -6,6 +6,7 @@ const listeners = {};
 const pageListeners = {};
 let page = {videos: []};
 let observer;
+let streamObserver;
 const created = [];
 
 class Observer {
@@ -23,8 +24,15 @@ class Plyr {
     destroy() { this.elements.container.isConnected = false; }
 }
 
+class StreamObserver {
+    constructor(callback) {this.callback = callback; streamObserver = this;}
+    observe(target) {this.target = target;}
+    unobserve(target) {this.unobserved = target;}
+    disconnect() {this.target = null;}
+}
+
 const sandbox = {
-    window: {Plyr, addEventListener: (name, fn) => {listeners[name] = fn;}},
+    window: {Plyr, IntersectionObserver: StreamObserver, addEventListener: (name, fn) => {listeners[name] = fn;}},
     document: {
         addEventListener: (name, fn) => {pageListeners[name] = fn;},
         getElementById: () => page,
@@ -52,3 +60,11 @@ page.videos.push({dataset: {}});
 sandbox.window.DicoPlyr.apply();
 assert.equal(created.length, 2);
 assert.equal(page.videos[1].dataset.dicoPlyrReady, 'true');
+
+const video = {dataset: {}, paused: true, preload: 'metadata', load() {this.loads = (this.loads || 0) + 1;}};
+page.videos.push(video);
+sandbox.window.DicoPlyr.apply();
+assert.equal(streamObserver.target, video);
+streamObserver.callback([{isIntersecting: true, target: video}]);
+assert.equal(video.preload, 'auto');
+assert.equal(video.loads, 1);
