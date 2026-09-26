@@ -2,8 +2,25 @@
     const selector = 'video[data-dico-player], .dico-media video';
     const players = new Set();
     let scheduled = false;
+    const streamObserver = window.IntersectionObserver ? new window.IntersectionObserver(entries => {
+        entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            const video = entry.target;
+            streamObserver.unobserve(video);
+            if (video.paused && video.preload !== 'auto') {
+                video.preload = 'auto';
+                video.load();
+            }
+        });
+    }, {rootMargin: '350px'}) : null;
 
     function mount() {
+        document.querySelectorAll('video[data-dico-stream]').forEach(video => {
+            if (video.dataset.dicoStreamReady) return;
+            video.dataset.dicoStreamReady = 'true';
+            if (streamObserver) streamObserver.observe(video);
+            else { video.preload = 'auto'; video.load?.(); }
+        });
         if (!window.Plyr) return;
         for (const player of players) {
             if (player.elements.container.isConnected) continue;
@@ -36,6 +53,7 @@
 
     window.DicoPlyr = {apply: scheduleMount};
     window.addEventListener('app:navigation-start', () => {
+        streamObserver?.disconnect();
         for (const player of players) player.destroy();
         players.clear();
     });

@@ -529,12 +529,14 @@ def _photo_for_line(line, attachments):
 
 def _render_inline_video(video, kind, item_id):
     source = html.escape(url_for("media.serve_media", kind=kind, item_id=item_id, media_id=video["id"]), quote=True)
+    poster = (f' poster="{html.escape(url_for("media.serve_media", kind=kind, item_id=item_id, media_id=video["id"], poster=1), quote=True)}"'
+              if video.get("poster") else "")
     download = html.escape(url_for("media.serve_media", kind=kind, item_id=item_id,
                                     media_id=video["id"], download=1), quote=True)
     name = html.escape(video.get("name", "영상"), quote=True)
     return (
         '<figure class="dico-media dico-media-attachment">'
-        f'<video class="dico-media-frame" src="{source}" controls preload="metadata" playsinline></video>'
+        f'<video class="dico-media-frame" src="{source}"{poster} controls preload="metadata" playsinline data-dico-stream></video>'
         '<figcaption class="dico-media-caption">'
         f'<span>{name}</span><a href="{download}" download="{name}">다운로드</a>'
         '</figcaption></figure>'
@@ -797,7 +799,7 @@ def _render_markdown(value, videos=(), kind=None, item_id=None):
             "class", "src", "title", "loading", "scrolling", "referrerpolicy",
             "allow", "allowfullscreen",
         ),
-        "video": ("class", "src", "controls", "preload", "playsinline"),
+        "video": ("class", "src", "poster", "controls", "preload", "playsinline", "data-dico-stream"),
         "th": ("align",),
         "td": ("align",),
     }

@@ -23,5 +23,6 @@ jobs:
       - run: node tests/test_inline_photo_picker.cjs
       - run: node tests/test_parallel_upload.cjs
       - run: node tests/test_plyr_preview.cjs
+      - run: node tests/test_video_poster.cjs
       - run: node --check api/static/js/media-drafts.js
       - run: python -m unittest discover -s tests -v

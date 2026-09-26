@@ -1,3 +1,4 @@
+import base64
 import io
 import unittest
 from threading import Barrier
@@ -8,6 +9,44 @@ from api.routes.module import media_storage as media
 
 
 class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_video_poster_is_saved_served_and_removed_with_draft(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        poster = b"RIFF" + b"\0" * 4 + b"WEBP" + b"preview"
+
+        async def writable(kind, item_id):
+            return {"images": []}, None
+
+        async def ready():
+            return None
+
+        class Uploads:
+            def find_one(self, query):
+                return {"user_id": 1, "name": "clip.mp4", "mime": "video/mp4", "size": 3,
+                        "count": 1, "chunks": {"0": {"sha": "a" * 40, "size": 3}}}
+
+            def delete_one(self, query):
+                return None
+
+        client = app.test_client()
+        async with client.session_transaction() as session:
+            session["user_id"] = 1
+        url = "/api/media/posts/1/videos/" + media_id + "/complete"
+        encoded = "data:image/webp;base64," + base64.b64encode(poster).decode()
+        with patch.object(media, "_write_target", writable), patch.object(media, "collection", return_value=Uploads()), patch.object(media, "_blob", return_value="b" * 40), patch.object(media, "_commit_blobs") as commit, patch.object(media, "_save_attachment", return_value=True) as save:
+            result = await client.post(url, json={"poster": encoded})
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(commit.call_args.args[0][-1], ("게시글/1/영상/" + media_id + "/poster.webp", "b" * 40))
+            attachment = save.call_args.args[2]
+            self.assertEqual(attachment["poster"], {"sha": "b" * 40, "size": len(poster)})
+            self.assertIn("게시글/1/영상/" + media_id + "/poster.webp", media._media_paths("posts", 1, attachment))
+
+        with patch.object(media, "ensure_database", ready), patch.object(media, "_document", return_value={"images": [attachment]}), patch.object(media, "_read_blob", return_value=poster) as read:
+            result = await client.get("/media/posts/1/" + media_id + "?poster=1")
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.content_type, "image/webp")
+            self.assertEqual(await result.get_data(), poster)
+            read.assert_called_once_with("b" * 40)
+
     def test_github_raw_mode_returns_bytes_without_base64_decoding(self):
         payload = b"\0\0\0\x18ftypbinary-video"
         with patch.dict("os.environ", {"postimage": "test-token"}), patch.object(media, "urlopen", return_value=io.BytesIO(payload)) as open_url:

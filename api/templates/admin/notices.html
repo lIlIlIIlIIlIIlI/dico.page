@@ -304,6 +304,7 @@
             const video = document.createElement('video');
             video.className = 'dico-media-frame';
             video.src = info.src;
+            if (info.poster) video.poster = info.poster;
             video.controls = true;
             video.preload = 'metadata';
             video.playsInline = true;
@@ -375,7 +376,7 @@
 
             const attached = !openedFence && imageAttachments.mediaForToken(candidate);
             const info = attached
-                ? {type: attached.file.type.startsWith('image/') ? 'image-attachment' : 'attachment', src: attached.previewUrl, name: attached.name}
+                ? {type: attached.file.type.startsWith('image/') ? 'image-attachment' : 'attachment', src: attached.previewUrl, name: attached.name, poster: attached.posterData}
                 : getMediaInfo(candidate);
             if (!info || openedFence) return [line];
 
@@ -427,7 +428,7 @@
             for (const heading of preview.querySelectorAll('h1')) {
                 const attached = imageAttachments.mediaForPreviewHeading(heading.textContent.trim());
                 if (attached) {
-                    heading.replaceWith(createMediaElement({type: attached.file.type.startsWith('image/') ? 'image-attachment' : 'attachment', src: attached.previewUrl, name: attached.name}));
+                    heading.replaceWith(createMediaElement({type: attached.file.type.startsWith('image/') ? 'image-attachment' : 'attachment', src: attached.previewUrl, name: attached.name, poster: attached.posterData}));
                 }
             }
             window.DicoPlyr?.apply();

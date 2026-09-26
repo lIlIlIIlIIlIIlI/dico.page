@@ -39,6 +39,19 @@ class InlineVideoTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("x&lt;y&amp;z.mp4", rendered)
             self.assertNotIn("<y&z", rendered)
 
+    async def test_uploaded_video_shows_saved_poster_and_warms_stream(self):
+        video = {"id": "11111111-1111-4111-8111-111111111111", "kind": "video",
+                 "name": "clip.mp4", "poster": {"sha": "a" * 40, "size": 20}}
+        async with app.test_request_context("/posts/12"):
+            rendered = _render_markdown("#[clip.mp4]", [video], "posts", 12)
+            self.assertIn("/media/posts/12/" + video["id"] + "?poster=1", rendered)
+            self.assertIn("data-dico-stream", rendered)
+            template = app.jinja_env.get_template("layout/attached_videos.html")
+            gallery = await template.render_async(images=[video], kind="posts", item_id=12,
+                                                  inline_video_ids=set())
+            self.assertIn("?poster=1", gallery)
+            self.assertIn("data-dico-stream", gallery)
+
     async def test_photo_marker_renders_at_its_line_without_duplicate_gallery(self):
         photo = {"id": "11111111-1111-4111-8111-111111111111", "kind": "image", "name": "x<y].jpg"}
         other = {"id": "22222222-2222-4222-8222-222222222222", "kind": "image", "name": "other.png"}
