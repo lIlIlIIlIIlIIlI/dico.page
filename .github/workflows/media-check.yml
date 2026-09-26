@@ -23,6 +23,7 @@ jobs:
       - run: node tests/test_media_picker.cjs
       - run: node tests/test_inline_photo_picker.cjs
       - run: node tests/test_parallel_upload.cjs
+      - run: node tests/test_upload_chunk_boundaries.cjs
       - run: node tests/test_plyr_preview.cjs
       - run: node tests/test_video_poster.cjs
       - run: node tests/test_large_video_download.cjs
