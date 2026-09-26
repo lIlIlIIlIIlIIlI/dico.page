@@ -291,7 +291,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                 label.appendChild(filename);
                 const state = document.createElement('span');
                 state.className = 'shrink-0 text-xs text-base-content/55';
-                state.textContent = entry.removed ? '삭제 중' : entry.uploaded ? '업로드 완료' : entry.failed ? '업로드 실패' : entry.uploading ? entry.progress || '업로드 중' : '준비 중';
+                state.textContent = entry.removed ? '삭제 중' : entry.failed ? '업로드 실패' : entry.uploading ? entry.progress || '업로드 중' : '준비 중';
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.className = 'btn btn-ghost btn-xs shrink-0 text-error';
@@ -325,7 +325,8 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         announce(error.message, true);
                     });
                 });
-                item.append(label, state);
+                item.appendChild(label);
+                if (!entry.uploaded || entry.removed) item.appendChild(state);
                 if (contentInput) {
                     const insert = document.createElement('button');
                     insert.type = 'button';
@@ -394,7 +395,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                                     if (!stopped && !entry.removed) {
                                         rememberEntry(entry, targetId);
                                         await uploadEntry(entry, options.kind, targetId, csrfToken);
-                                        if (!entry.removed) announce(entry.name + ' 업로드를 완료했습니다.');
+                                        if (!entry.removed) announce('');
                                     }
                                 } catch (error) {
                                     if (!entry.removed) {

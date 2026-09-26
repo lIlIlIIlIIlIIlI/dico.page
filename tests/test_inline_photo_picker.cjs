@@ -72,6 +72,8 @@ picker.listeners.change();
     const row = selectors.get('[data-image-list]').children[0];
     assert.equal(row.children[1].children.length, 1);
     assert.equal(row.children[1].children[0].textContent, 'picture.png');
+    assert.equal(row.children[2].tagName, 'BUTTON');
+    assert.equal(selectors.get('[data-image-status]').textContent, '');
     let buttons = selectors.get('[data-image-list]').children[0].children.filter(child => child.tagName === 'BUTTON');
     assert.deepEqual(buttons.map(button => button.textContent), ['본문에 삽입', '삭제']);
     content.selectionStart = content.selectionEnd = content.value.length;
