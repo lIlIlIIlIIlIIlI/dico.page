@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "layout/author_identity.html" import avatar, name %}
 
 {% block title %}{{ post.title }} | Dico.page{% endblock %}
 
@@ -83,8 +84,8 @@
             </div>
             <div class="min-h-0 flex-1 overflow-y-auto p-4">
                 {% if current_user | default(none) %}
-                <a href="/users/{{ current_user.user_uid }}" class="flex items-center gap-3 rounded-2xl bg-primary/5 p-4">
-                    <div class="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary font-bold text-primary-content">{{ current_user.nickname | first }}</div>
+                <a href="{{ url_for('home.user_profile', user_uid=current_user.user_uid) }}" class="flex items-center gap-3 rounded-2xl bg-primary/5 p-4">
+                    <div class="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-primary font-bold text-primary-content">{% if current_user.avatar_url %}<img src="{{ current_user.avatar_url }}" alt="" class="size-full object-cover">{% else %}{{ current_user.nickname | first }}{% endif %}</div>
                     <div class="min-w-0"><p class="truncate font-bold">{{ current_user.nickname }}</p><p class="mt-0.5 text-xs text-base-content/45">내 프로필 보기</p></div>
                 </a>
                 {% endif %}
@@ -137,8 +138,8 @@
 
                     <div class="mt-5 flex flex-wrap items-center justify-between gap-4 border-b border-base-300 pb-5">
                         <div class="flex items-center gap-3">
-                            <div class="flex size-10 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">{{ post.author_nickname | first }}</div>
-                            <div><p class="font-semibold">{{ post.author_nickname }}</p><p class="text-xs text-base-content/45">{{ post.created_at[:16].replace('T', ' ') }} · 조회 {{ post.views }}</p></div>
+                            {{ avatar(post) }}
+                            <div><p>{{ name(post) }}</p><p class="text-xs text-base-content/45">{{ post.created_at[:16].replace('T', ' ') }} · 조회 {{ post.views }}</p></div>
                         </div>
                         <div class="flex items-center gap-1"><a href="#mobile-comments" class="btn btn-ghost btn-sm">댓글 <span id="mobile-header-comment-count">{{ post.comment_count }}</span></a><button id="mobile-share-button" data-share-button type="button" class="btn btn-ghost btn-sm">URL 복사</button></div>
                     </div>
@@ -182,8 +183,8 @@
                     <div id="mobile-comment-list" data-comment-list class="divide-y divide-base-300">
                         {% for comment in comments %}
                         <article class="flex gap-3 py-5" data-comment-id="{{ comment.id }}">
-                            <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-base-200 text-sm font-bold">{{ comment.author_nickname | first }}</div>
-                            <div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-semibold">{{ comment.author_nickname }}</span><span class="text-xs text-base-content/40">{{ comment.created_at[:16].replace('T', ' ') }}</span></div><p class="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{{ comment.content }}</p></div>
+                            {{ avatar(comment, 'size-9', 'bg-base-200 text-base-content text-sm') }}
+                            <div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2">{{ name(comment, 'text-sm font-semibold') }}<span class="text-xs text-base-content/40">{{ comment.created_at[:16].replace('T', ' ') }}</span></div><p class="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{{ comment.content }}</p></div>
                         </article>
                         {% else %}<p id="mobile-comment-empty" data-comment-empty class="py-12 text-center text-sm text-base-content/45">첫 댓글을 남겨보세요.</p>{% endfor %}
                     </div>
@@ -214,8 +215,8 @@
 
                     <div class="mt-5 flex flex-wrap items-center justify-between gap-4 border-b border-base-300 pb-5">
                         <div class="flex items-center gap-3">
-                            <div class="flex size-10 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">{{ post.author_nickname | first }}</div>
-                            <div><p class="font-semibold">{{ post.author_nickname }}</p><p class="text-xs text-base-content/45">{{ post.created_at[:16].replace('T', ' ') }} · 조회 {{ post.views }}</p></div>
+                            {{ avatar(post) }}
+                            <div><p>{{ name(post) }}</p><p class="text-xs text-base-content/45">{{ post.created_at[:16].replace('T', ' ') }} · 조회 {{ post.views }}</p></div>
                         </div>
                         <div class="flex items-center gap-1"><a href="#desktop-comments" class="btn btn-ghost btn-sm">댓글 <span id="header-comment-count">{{ post.comment_count }}</span></a><button id="share-button" data-share-button type="button" class="btn btn-ghost btn-sm">URL 복사</button></div>
                     </div>
@@ -259,8 +260,8 @@
                     <div id="comment-list" data-comment-list class="divide-y divide-base-300">
                         {% for comment in comments %}
                         <article class="flex gap-3 py-5" data-comment-id="{{ comment.id }}">
-                            <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-base-200 text-sm font-bold">{{ comment.author_nickname | first }}</div>
-                            <div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-semibold">{{ comment.author_nickname }}</span><span class="text-xs text-base-content/40">{{ comment.created_at[:16].replace('T', ' ') }}</span></div><p class="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{{ comment.content }}</p></div>
+                            {{ avatar(comment, 'size-9', 'bg-base-200 text-base-content text-sm') }}
+                            <div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2">{{ name(comment, 'text-sm font-semibold') }}<span class="text-xs text-base-content/40">{{ comment.created_at[:16].replace('T', ' ') }}</span></div><p class="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{{ comment.content }}</p></div>
                         </article>
                         {% else %}<p id="comment-empty" data-comment-empty class="py-12 text-center text-sm text-base-content/45">첫 댓글을 남겨보세요.</p>{% endfor %}
                     </div>
@@ -427,16 +428,33 @@
         const article = document.createElement('article');
         article.className = 'flex gap-3 py-5';
         article.dataset.commentId = comment.id;
-        const avatar = document.createElement('div');
+        const avatar = document.createElement(comment.user_uid ? 'a' : 'span');
         avatar.className = 'flex size-9 shrink-0 items-center justify-center rounded-full bg-base-200 text-sm font-bold';
-        avatar.textContent = String(comment.author_nickname).charAt(0);
+        if (comment.user_uid) {
+            avatar.href = '/profile/' + encodeURIComponent(comment.user_uid);
+            avatar.setAttribute('aria-label', comment.author_nickname + '님의 프로필');
+        }
+        if (comment.avatar_url) {
+            avatar.classList.add('overflow-hidden');
+            const picture = document.createElement('img');
+            picture.src = comment.avatar_url;
+            picture.alt = '';
+            picture.className = 'size-full object-cover';
+            avatar.appendChild(picture);
+        } else {
+            avatar.textContent = String(comment.author_nickname).charAt(0);
+        }
         const body = document.createElement('div');
         body.className = 'min-w-0 flex-1';
         const meta = document.createElement('div');
         meta.className = 'flex flex-wrap items-center gap-2';
-        const author = document.createElement('span');
+        const author = document.createElement(comment.user_uid ? 'a' : 'span');
         author.className = 'text-sm font-semibold';
         author.textContent = comment.author_nickname;
+        if (comment.user_uid) {
+            author.href = '/profile/' + encodeURIComponent(comment.user_uid);
+            author.classList.add('hover:text-primary', 'hover:underline');
+        }
         const date = document.createElement('span');
         date.className = 'text-xs text-base-content/40';
         date.textContent = String(comment.created_at).slice(0, 16).replace('T', ' ');
