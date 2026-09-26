@@ -1,9 +1,9 @@
 import base64
-import io
 import unittest
 from threading import Barrier
 from unittest.mock import patch
 
+import httpx
 from api.index import app
 from api.routes.module import media_storage as media
 
@@ -49,10 +49,11 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
 
     def test_github_raw_mode_returns_bytes_without_base64_decoding(self):
         payload = b"\0\0\0\x18ftypbinary-video"
-        with patch.dict("os.environ", {"postimage": "test-token"}), patch.object(media, "urlopen", return_value=io.BytesIO(payload)) as open_url:
+        response = httpx.Response(200, content=payload, request=httpx.Request("GET", "https://api.github.com"))
+        with patch.dict("os.environ", {"postimage": "test-token"}), patch.object(media, "_github_client") as client:
+            client.return_value.request.return_value = response
             self.assertEqual(media._github("GET", "/git/blobs/" + "f" * 40, raw=True), payload)
-            request = open_url.call_args.args[0]
-            self.assertEqual(request.get_header("Accept"), "application/vnd.github.raw+json")
+            self.assertEqual(client.return_value.request.call_args.kwargs["headers"]["Accept"], "application/vnd.github.raw+json")
 
     def test_blob_reads_raw_bytes_and_reuses_warm_cache(self):
         sha = "f" * 40
@@ -225,7 +226,8 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             return parts[shas.index(sha)]
 
         with patch.object(media, "ensure_database", ready), patch.object(media, "_document", return_value=document), patch.object(media, "_read_blob", side_effect=read) as reader:
-            response = await app.test_client().get("/media/posts/1/" + media_id, headers={"Range": "bytes=0-"})
+            response = await app.test_client().get("/media/posts/1/" + media_id,
+                                                   headers={"Range": "bytes=0-" + str(6 * media.CHUNK_BYTES - 1)})
             self.assertEqual(response.status_code, 206)
             self.assertEqual(await response.get_data(), b"".join(parts))
             self.assertEqual(response.headers["Content-Range"], "bytes 0-" + str(6 * media.CHUNK_BYTES - 1) + "/" + str(6 * media.CHUNK_BYTES))
@@ -253,7 +255,7 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await stream.__anext__(), b"b" * media.CHUNK_BYTES)
                 self.assertEqual(reader.call_count, 2)
 
-    async def test_video_range_caps_at_200_mib_without_buffering_it(self):
+    async def test_open_video_range_is_bounded_and_followup_range_can_continue(self):
         media_id = "11111111-1111-4111-8111-111111111111"
         size = 201 * 1024 * 1024
         document = {"images": [{
@@ -268,9 +270,16 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             async with app.test_request_context("/media/posts/1/" + media_id, headers={"Range": "bytes=0-"}):
                 response = await media.serve_media("posts", 1, media_id)
                 self.assertEqual(response.status_code, 206)
-                self.assertEqual(response.headers["Content-Range"], "bytes 0-" + str(media.MAX_PLAYBACK_RANGE_BYTES - 1) + "/" + str(size))
-                self.assertEqual(response.headers["Content-Length"], str(media.MAX_PLAYBACK_RANGE_BYTES))
+                self.assertEqual(response.headers["Content-Range"], "bytes 0-" + str(media.OPEN_PLAYBACK_RANGE_BYTES - 1) + "/" + str(size))
+                self.assertEqual(response.headers["Content-Length"], str(media.OPEN_PLAYBACK_RANGE_BYTES))
                 reader.assert_called_once()
+            async with app.test_request_context("/media/posts/1/" + media_id,
+                                                headers={"Range": "bytes=" + str(media.OPEN_PLAYBACK_RANGE_BYTES) + "-"}):
+                continuation = await media.serve_media("posts", 1, media_id)
+                self.assertEqual(continuation.status_code, 206)
+                self.assertEqual(continuation.headers["Content-Range"],
+                                 "bytes " + str(media.OPEN_PLAYBACK_RANGE_BYTES) + "-" +
+                                 str(2 * media.OPEN_PLAYBACK_RANGE_BYTES - 1) + "/" + str(size))
 
     async def test_video_range_honors_seek_offset_and_explicit_end(self):
         media_id = "11111111-1111-4111-8111-111111111111"
