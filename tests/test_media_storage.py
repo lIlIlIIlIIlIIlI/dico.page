@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import unittest
 from threading import Barrier
 from unittest.mock import patch
@@ -120,6 +121,17 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
                 media._github("POST", "/git/blobs", {"content": "x", "encoding": "base64"})
             self.assertEqual(problem.exception.retry_after, 45)
 
+    def test_github_blob_validation_error_is_not_reported_as_a_branch_conflict(self):
+        response = httpx.Response(422, json={"message": "Validation Failed"},
+                                  request=httpx.Request("POST", "https://api.github.com"))
+        with patch.dict("os.environ", {"postimage": "test-token"}), patch.object(media, "_github_client") as client:
+            client.return_value.request.return_value = response
+            with self.assertRaises(media.MediaStorageError) as problem:
+                media._github("POST", "/git/blobs", {"content": "x", "encoding": "base64"})
+            self.assertIsInstance(problem.exception, media.MediaValidationError)
+            self.assertIn("Validation Failed", str(problem.exception))
+            self.assertNotIn("동시에 변경", str(problem.exception))
+
     def test_blob_reads_raw_bytes_and_reuses_warm_cache(self):
         sha = "f" * 40
         media._read_blob.cache_clear()
@@ -235,6 +247,100 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 200)
             self.assertEqual((await response.get_json())["uploaded_chunks"], [0])
             write.assert_called_once_with(payload)
+
+    async def test_split_github_blobs_resume_and_play_across_irregular_boundaries(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        payload = b"\0\0\0\x18ftyp" + bytes(range(32))
+
+        async def writable(kind, item_id):
+            return {"images": []}, None
+
+        class Uploads:
+            state = None
+
+            def find_one(self, query, projection=None):
+                return self.state
+
+            def update_one(self, query, changes, upsert=False):
+                if self.state is None:
+                    self.state = dict(changes.get("$setOnInsert", {}))
+                for path, value in changes.get("$set", {}).items():
+                    target = self.state
+                    keys = path.split(".")
+                    for key in keys[:-1]:
+                        target = target.setdefault(key, {})
+                    target[keys[-1]] = value
+                value = changes.get("$addToSet", {}).get("uploaded_chunks")
+                if value is not None and value not in self.state["uploaded_chunks"]:
+                    self.state["uploaded_chunks"].append(value)
+
+            def delete_one(self, query):
+                self.state = None
+
+        class Parts:
+            documents = {}
+
+            def replace_one(self, query, document, upsert=False):
+                self.documents[document["_id"]] = document
+
+            def find(self, query):
+                return list(reversed([part for part in self.documents.values()
+                                      if part["upload_id"] == query["upload_id"]
+                                      and part["logical_index"] == query["logical_index"]]))
+
+            def delete_many(self, query):
+                self.documents.clear()
+
+        uploads, staged = Uploads(), Parts()
+        client = app.test_client()
+        async with client.session_transaction() as session:
+            session["user_id"] = 1
+        base = "/api/media/posts/9/videos/" + media_id
+        args = "?name=test.mp4&mime=video%2Fmp4&size=40&count=1&chunk_size=40&chunk_index=0&chunk_offset="
+        written = []
+
+        def write(data):
+            written.append(data)
+            return str(len(written)) * 40
+
+        with patch.object(media, "_write_target", writable), patch.object(
+                media, "collection", side_effect=lambda name: staged if name == "media_upload_parts" else uploads), \
+                patch.object(media, "WIRE_CHUNK_BYTES", 10), patch.object(media, "VIDEO_CHUNK_BYTES", 40), \
+                patch.object(media, "GITHUB_BLOB_BYTES", 12), patch.object(media, "_queued_blob", side_effect=write), \
+                patch.object(media, "_commit_blobs") as commit, patch.object(
+                    media, "_save_attachment", return_value=True) as save:
+            for index, offset in enumerate(range(0, 40, 10)):
+                response = await client.post(base + "/chunks/" + str(index) + args + str(offset),
+                                             data=payload[offset:offset + 10],
+                                             headers={"Content-Type": "video/mp4"})
+                self.assertEqual(response.status_code, 202 if index == 3 else 200)
+            self.assertEqual(len(written), 1)
+            self.assertEqual(uploads.state["blob_parts"]["0"]["0"]["size"], 12)
+            for index in range(3):
+                response = await client.post(base + "/chunks/3" + args + "30",
+                                             data=payload[30:40], headers={"Content-Type": "video/mp4"})
+                self.assertEqual(response.status_code, 200 if index == 2 else 202)
+            self.assertEqual(written, [payload[:12], payload[12:24], payload[24:36], payload[36:]])
+            self.assertEqual((await response.get_json())["uploaded_chunks"], [0])
+            complete = await client.post(base + "/complete",
+                                         json={"sha256": hashlib.sha256(payload).hexdigest()})
+            self.assertEqual(complete.status_code, 200)
+            self.assertEqual([path for path, sha in commit.call_args.args[0]],
+                             ["게시글/9/영상/" + media_id + "/" + str(index).zfill(4) + ".part"
+                              for index in range(4)])
+            stored = save.call_args.args[2]
+            self.assertEqual([part["size"] for part in stored["chunks"]], [12, 12, 12, 4])
+
+        async def ready():
+            return None
+
+        with patch.object(media, "ensure_database", ready), patch.object(
+                media, "_document", return_value={"images": [stored]}), patch.object(
+                    media, "_read_blob", side_effect=lambda sha: written[int(sha[0]) - 1]):
+            response = await client.get("/media/posts/9/" + media_id,
+                                        headers={"Range": "bytes=10-26"})
+            self.assertEqual(response.status_code, 206)
+            self.assertEqual(await response.get_data(), payload[10:27])
 
     async def test_general_file_limit_remains_100_mib(self):
         media_id = "11111111-1111-4111-8111-111111111111"

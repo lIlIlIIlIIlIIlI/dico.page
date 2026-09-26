@@ -29,14 +29,20 @@ function pickerAndForm(prefix) {
     return {picker, form: {querySelector: selector => selectors.get(selector), addEventListener() {}}};
 }
 
-function sandboxFor(requests) {
+function sandboxFor(requests, pendingAt = '') {
+    let pendingSent = false;
     return {
         window: {DicoSha256: {create: () => ({update() {}, digest: () => '0'.repeat(64)})}},
-        document: {createElement: element}, crypto: webcrypto, AbortController, setTimeout, clearTimeout,
+        document: {createElement: element}, crypto: webcrypto, AbortController,
+        setTimeout: pendingAt ? callback => setImmediate(callback) : setTimeout, clearTimeout,
         URL: {createObjectURL: () => 'blob:media', revokeObjectURL() {}},
         Event: class {constructor(type) {this.type = type;}},
         fetch: async (url, options = {}) => {
             if (url.includes('/chunks/')) requests.push({url, length: options.body.length});
+            if (pendingAt && url.includes(pendingAt) && !pendingSent) {
+                pendingSent = true;
+                return {ok: true, json: async () => ({success: true, pending: true, retry_after: 1.5})};
+            }
             return {ok: true, json: async () => url === '/api/media/status'
                 ? {configured: true} : {success: true, uploaded_chunks: []}};
         },
@@ -68,9 +74,9 @@ function assertChunks(requests, route, expected) {
     });
 }
 
-async function imageOrVideo(name, type, size, route, expected) {
+async function imageOrVideo(name, type, size, route, expected, pendingAt = '') {
     const requests = [];
-    const sandbox = sandboxFor(requests);
+    const sandbox = sandboxFor(requests, pendingAt);
     load(sandbox, ['media-upload-queue.js', 'image-attachments.js']);
     const {picker, form} = pickerAndForm('image');
     const uploader = sandbox.window.DicoImageAttachments.mount(form,
@@ -84,7 +90,7 @@ async function imageOrVideo(name, type, size, route, expected) {
 
 async function attachedFile() {
     const requests = [];
-    const sandbox = sandboxFor(requests);
+    const sandbox = sandboxFor(requests, 'chunk_index=0&chunk_offset=' + 48 * MiB);
     load(sandbox, ['media-upload-queue.js', 'file-attachments.js']);
     const {picker, form} = pickerAndForm('file');
     const uploader = sandbox.window.DicoFileAttachments.mount(form);
@@ -92,7 +98,7 @@ async function attachedFile() {
     picker.listeners.change();
     await uploader.uploadAll('posts', 35, 'csrf');
     const expected = Array.from({length: 12}, (_, index) => [0, index * 4 * MiB, 4 * MiB]);
-    expected.push([0, 48 * MiB, 2 * MiB], [1, 0, MiB]);
+    expected.push([0, 48 * MiB, 2 * MiB], [0, 48 * MiB, 2 * MiB], [1, 0, MiB]);
     assertChunks(requests, 'files', expected);
 }
 
@@ -101,7 +107,9 @@ async function attachedFile() {
         [[0, 0, 4 * MiB], [0, 4 * MiB, MiB], [1, 0, MiB]]);
     const videoParts = Array.from({length: 12}, (_, index) => [0, index * 4 * MiB, 4 * MiB]);
     videoParts.push([0, 48 * MiB, 2 * MiB], [1, 0, MiB]);
-    await imageOrVideo('sample.mp4', 'video/mp4', 51 * MiB, 'videos', videoParts);
+    videoParts.splice(13, 0, [0, 48 * MiB, 2 * MiB]);
+    await imageOrVideo('sample.mp4', 'video/mp4', 51 * MiB, 'videos', videoParts,
+        'chunk_index=0&chunk_offset=' + 48 * MiB);
     await attachedFile();
-    console.log('Photo, video and file chunks stop at their 5/50 MiB logical boundaries.');
+    console.log('Photo, video and file chunks stop at logical boundaries and retry pending GitHub blobs.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

@@ -98,7 +98,16 @@ window.DicoFileAttachments = window.DicoFileAttachments || (() => {
                             if (entry.completedChunks.has(logicalIndex)) continue;
                             const index = logicalIndex * chunksPerLogical + offset / wireChunkSize;
                             const query = args + '&chunk_index=' + logicalIndex + '&chunk_offset=' + offset;
-                            const result = await send(base + '/chunks/' + index + query, body, csrfToken);
+                            let result;
+                            do {
+                                result = await send(base + '/chunks/' + index + query, body, csrfToken);
+                                if (result.pending) {
+                                    entry.progress = 'GitHub에 파일 조각 저장 중';
+                                    render();
+                                    await new Promise(resolve => setTimeout(resolve,
+                                        Math.max(1.5, Number(result.retry_after) || 0) * 1000));
+                                }
+                            } while (result.pending);
                             entry.completedChunks = new Set(result.uploaded_chunks || entry.completedChunks);
                         }
                         entry.progress = '업로드 중 ' + Math.max(logicalIndex + 1, entry.completedChunks.size) + '/' + total;
