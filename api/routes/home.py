@@ -516,7 +516,8 @@ def _video_for_line(line, videos):
     if not candidate.startswith("#[") or not candidate.endswith("]"):
         return None
     return next((video for video in videos if video.get("kind") == "video"
-                 and candidate == "#[" + video.get("name", "") + "]"), None)
+                 and (candidate == "#[" + video.get("id", "") + "]"
+                      or candidate == "#[" + video.get("name", "") + "]")), None)
 
 
 def _photo_for_line(line, attachments):

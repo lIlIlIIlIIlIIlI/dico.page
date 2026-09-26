@@ -5,6 +5,31 @@ from api.routes.home import _inline_photo_ids, _inline_video_ids, _render_markdo
 
 
 class InlineVideoTests(unittest.IsolatedAsyncioTestCase):
+    async def test_id_shortcodes_select_each_video_even_with_the_same_filename(self):
+        first = {"id": "11111111-1111-4111-8111-111111111111", "kind": "video", "name": "clip.mp4"}
+        second = {"id": "22222222-2222-4222-8222-222222222222", "kind": "video", "name": "clip.mp4"}
+        content = "앞의 영상\n\n#[" + first["id"] + "]\n\n뒤의 영상\n\n#[" + second["id"] + "]"
+        async with app.test_request_context("/posts/17"):
+            rendered = _render_markdown(content, [first, second], "posts", 17)
+            first_url = "/media/posts/17/" + first["id"]
+            second_url = "/media/posts/17/" + second["id"]
+            self.assertLess(rendered.index(first_url), rendered.index("뒤의 영상"))
+            self.assertLess(rendered.index("뒤의 영상"), rendered.index(second_url))
+            self.assertEqual(_inline_video_ids(content, [first, second]), {first["id"], second["id"]})
+            self.assertEqual(rendered.count("<video"), 2)
+
+    async def test_id_shortcode_works_for_notice_and_ignores_unknown_id_and_code_fence(self):
+        video = {"id": "11111111-1111-4111-8111-111111111111", "kind": "video", "name": "clip.mp4"}
+        content = "#[" + video["id"] + "]\n\n#[22222222-2222-4222-8222-222222222222]"
+        async with app.test_request_context("/notices/4"):
+            rendered = _render_markdown(content, [video], "notices", 4)
+            self.assertIn("/media/notices/4/" + video["id"], rendered)
+            self.assertEqual(rendered.count("<video"), 1)
+            self.assertEqual(_inline_video_ids(content, [video]), {video["id"]})
+            fenced = "```\n#[" + video["id"] + "]\n```"
+            self.assertEqual(_inline_video_ids(fenced, [video]), set())
+            self.assertNotIn("<video", _render_markdown(fenced, [video], "notices", 4))
+
     async def test_shortcode_renders_player_at_its_line_and_hides_top_duplicate(self):
         video = {"id": "11111111-1111-4111-8111-111111111111", "kind": "video", "name": "VALORANT 02-16.mp4"}
         content = "앞의 글\n\n#[VALORANT 02-16.mp4]\n\n뒤의 글"

@@ -131,12 +131,12 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
 
         function videoForToken(line) {
             return files.find(entry => !entry.removed && videoTypes.has(entry.file.type)
-                && line.trim() === '#[' + entry.name + ']');
+                && line.trim() === '#[' + entry.id + ']');
         }
 
         function markerFor(entry) {
             return videoTypes.has(entry.file.type)
-                ? '#[' + entry.name + ']'
+                ? '#[' + entry.id + ']'
                 : '![' + entry.name + '](dico-image:' + entry.id + ')';
         }
 
@@ -217,9 +217,21 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                     item.appendChild(icon);
                 }
                 const label = document.createElement('span');
-                label.className = 'min-w-0 flex-1 truncate text-sm';
-                label.textContent = entry.name;
-                label.title = entry.name;
+                label.className = 'min-w-0 flex-1 text-sm';
+                const filename = document.createElement('span');
+                filename.className = 'block truncate';
+                filename.textContent = entry.name;
+                filename.title = entry.name;
+                label.appendChild(filename);
+                if (entry.uploaded && videoTypes.has(entry.file.type) && options.kind && targetId) {
+                    const link = document.createElement('a');
+                    link.href = window.location.origin + '/media/' + options.kind + '/' + targetId + '/' + entry.id;
+                    link.className = 'block break-all text-xs text-primary hover:underline';
+                    link.textContent = link.href;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    label.appendChild(link);
+                }
                 const state = document.createElement('span');
                 state.className = 'shrink-0 text-xs text-base-content/55';
                 state.textContent = entry.removed ? '삭제 중' : entry.uploaded ? '업로드 완료' : entry.failed ? '업로드 실패' : entry.uploading ? entry.progress || '업로드 중' : '준비 중';
@@ -241,8 +253,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         }
                         URL.revokeObjectURL(entry.previewUrl);
                         files = files.filter(item => item !== entry);
-                        if (contentInput && (imageTypes.has(entry.file.type)
-                            || !files.some(item => item.name === entry.name && videoTypes.has(item.file.type)))) {
+                        if (contentInput) {
                             const marker = markerFor(entry);
                             contentInput.value = contentInput.value.split('\n')
                                 .filter(line => line.trim() !== marker).join('\n');
