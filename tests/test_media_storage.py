@@ -55,6 +55,16 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(media._github("GET", "/git/blobs/" + "f" * 40, raw=True), payload)
             self.assertEqual(client.return_value.request.call_args.kwargs["headers"]["Accept"], "application/vnd.github.raw+json")
 
+    def test_github_rate_limit_returns_retry_delay(self):
+        response = httpx.Response(403, json={"message": "secondary rate limit"},
+                                  headers={"retry-after": "45"},
+                                  request=httpx.Request("POST", "https://api.github.com"))
+        with patch.dict("os.environ", {"postimage": "test-token"}), patch.object(media, "_github_client") as client:
+            client.return_value.request.return_value = response
+            with self.assertRaises(media.MediaRateLimitError) as problem:
+                media._github("POST", "/git/blobs", {"content": "x", "encoding": "base64"})
+            self.assertEqual(problem.exception.retry_after, 45)
+
     def test_blob_reads_raw_bytes_and_reuses_warm_cache(self):
         sha = "f" * 40
         media._read_blob.cache_clear()
@@ -64,7 +74,7 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             github.assert_called_once_with("GET", "/git/blobs/" + sha, raw=True)
         media._read_blob.cache_clear()
 
-    async def test_video_allows_200_mib_but_rejects_larger_uploads(self):
+    async def test_video_allows_10_gib_in_4_mib_chunks_but_rejects_larger_uploads(self):
         media_id = "11111111-1111-4111-8111-111111111111"
 
         async def writable(kind, item_id):
@@ -81,12 +91,13 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
         async with client.session_transaction() as session:
             session["user_id"] = 1
         base = "/api/media/posts/9/videos/" + media_id + "/chunks/0?name=test.mp4&mime=video%2Fmp4&size="
-        signature = b"\0\0\0\x18ftyp" + b"\0" * (media.CHUNK_BYTES - 8)
+        signature = b"\0\0\0\x18ftyp" + b"\0" * (media.VIDEO_CHUNK_BYTES - 8)
+        args = "&count=2560&chunk_size=" + str(media.VIDEO_CHUNK_BYTES)
         with patch.object(media, "_write_target", writable), patch.object(media, "collection", return_value=Uploads()), patch.object(media, "_blob", return_value="a" * 40):
-            valid = await client.post(base + str(200 * 1024 * 1024) + "&count=267", data=signature,
+            valid = await client.post(base + str(media.MAX_VIDEO_BYTES) + args, data=signature,
                                       headers={"Content-Type": "video/mp4"})
             self.assertEqual(valid.status_code, 200)
-            too_large = await client.post(base + str(200 * 1024 * 1024 + 1) + "&count=267", data=signature,
+            too_large = await client.post(base + str(media.MAX_VIDEO_BYTES + 1) + args, data=signature,
                                           headers={"Content-Type": "video/mp4"})
             self.assertEqual(too_large.status_code, 400)
 
@@ -204,6 +215,23 @@ class MediaStorageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 206)
             self.assertEqual(await response.get_data(), last)
             self.assertEqual(response.headers["Content-Range"], "bytes " + str(media.CHUNK_BYTES) + "-" + str(media.CHUNK_BYTES + 2) + "/" + str(media.CHUNK_BYTES + 3))
+
+    async def test_new_video_seeks_across_four_mib_chunk_boundary(self):
+        media_id = "11111111-1111-4111-8111-111111111111"
+        size = media.VIDEO_CHUNK_BYTES
+        document = {"images": [{"id": media_id, "kind": "video", "mime": "video/mp4",
+                                "size": size + 3, "chunk_size": size,
+                                "chunks": [{"sha": "a" * 40, "size": size},
+                                           {"sha": "b" * 40, "size": 3}]}]}
+
+        async def ready():
+            return None
+
+        with patch.object(media, "ensure_database", ready), patch.object(media, "_document", return_value=document), patch.object(media, "_read_blob", side_effect=lambda sha: b"a" * size if sha == "a" * 40 else b"xyz"):
+            response = await app.test_client().get("/media/posts/1/" + media_id,
+                                                   headers={"Range": "bytes=" + str(size - 2) + "-" + str(size + 2)})
+            self.assertEqual(response.status_code, 206)
+            self.assertEqual(await response.get_data(), b"aaxyz")
 
     async def test_video_range_streams_beyond_three_mib_with_bounded_concurrency(self):
         media_id = "11111111-1111-4111-8111-111111111111"

@@ -28,6 +28,7 @@ let inFlight = 0;
 let maxInFlight = 0;
 let failedOnce = false;
 const attempts = new Map();
+const chunkUrls = [];
 const completions = [];
 const sandbox = {
     window: {}, document: {createElement: element}, crypto: webcrypto, AbortController,
@@ -39,6 +40,7 @@ const sandbox = {
             return {ok: true, json: async () => ({success: true})};
         }
         if (url.includes('/chunks/')) {
+            chunkUrls.push(url);
             const key = url.slice(0, url.indexOf('?'));
             attempts.set(key, (attempts.get(key) || 0) + 1);
             inFlight++;
@@ -75,12 +77,17 @@ picker.listeners.change();
     assert.equal(uploader.hasFiles(), true);
     assert(maxInFlight > 1 && maxInFlight <= 6);
     assert.equal(completions.length, 1);
+    assert(chunkUrls.every(url => url.includes('count=6&chunk_size=4194304')));
 
     await uploader.uploadAll('posts', 17, 'csrf');
     assert.equal(completions.length, 2);
     const repeated = Array.from(attempts.values()).filter(count => count > 1);
     assert.deepEqual(repeated, [2]);
     const previousRequests = attempts.size;
+    picker.files = [{...video('too-large.mp4'), size: 10 * 1024 ** 3 + 1}];
+    picker.listeners.change();
+    await uploader.ready();
+    assert.equal(attempts.size, previousRequests);
     picker.files = [video('canceled.mp4')];
     picker.listeners.change();
     uploader.stop();

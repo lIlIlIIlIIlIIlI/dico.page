@@ -19,11 +19,12 @@ from .auth import ensure_database, get_current_user, validate_csrf_token
 media_bp = Blueprint("media", __name__)
 REPOSITORY = "dico-page/postimage"
 CHUNK_BYTES = 768 * 1024
+VIDEO_CHUNK_BYTES = 4 * 1024 * 1024
 POSTER_BYTES = 128 * 1024
 PLAYBACK_READ_CONCURRENCY = 4
 MAX_PLAYBACK_RANGE_BYTES = 200 * 1024 * 1024
 OPEN_PLAYBACK_RANGE_BYTES = 10 * 1024 * 1024
-MAX_VIDEO_BYTES = 200 * 1024 * 1024
+MAX_VIDEO_BYTES = 10 * 1024 ** 3
 MAX_FILE_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENTS = 5
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
@@ -36,9 +37,15 @@ class MediaStorageError(Exception):
     pass
 
 
+class MediaRateLimitError(MediaStorageError):
+    def __init__(self, retry_after):
+        super().__init__("GitHub 요청 제한으로 잠시 대기하고 있습니다.")
+        self.retry_after = retry_after
+
+
 @lru_cache(maxsize=1)
 def _github_client():
-    return httpx.Client(timeout=20, follow_redirects=True,
+    return httpx.Client(timeout=60, follow_redirects=True,
                         limits=httpx.Limits(max_connections=16, max_keepalive_connections=12))
 
 
@@ -59,6 +66,25 @@ def _github(method, endpoint, payload=None, raw=False):
         response.raise_for_status()
         return response.content if raw else response.json()
     except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (403, 429):
+            try:
+                message = exc.response.json().get("message", "").lower()
+            except (ValueError, AttributeError):
+                message = ""
+            if (exc.response.status_code == 429 or exc.response.headers.get("x-ratelimit-remaining") == "0"
+                    or "rate limit" in message or "abuse detection" in message):
+                retry = exc.response.headers.get("retry-after", "")
+                reset = exc.response.headers.get("x-ratelimit-reset", "")
+                try:
+                    if retry:
+                        delay = int(retry)
+                    elif reset and exc.response.headers.get("x-ratelimit-remaining") == "0":
+                        delay = max(60, int(reset) - int(datetime.now(timezone.utc).timestamp()))
+                    else:
+                        delay = 60
+                except ValueError:
+                    delay = 60
+                raise MediaRateLimitError(min(3600, max(1, delay))) from exc
         if exc.response.status_code in (401, 403):
             raise MediaStorageError("postimage 토큰의 저장소 접근 권한을 확인해 주세요.") from exc
         if exc.response.status_code in (409, 422):
@@ -420,6 +446,7 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
         mime = request.args["mime"]
         size = int(request.args["size"])
         count = int(request.args["count"])
+        chunk_size = int(request.args.get("chunk_size", CHUNK_BYTES)) if media_kind == "video" else CHUNK_BYTES
     except (KeyError, ValueError) as exc:
         return jsonify({"success": False, "message": "영상 정보가 올바르지 않습니다."}), 400
     if media_kind == "video":
@@ -427,9 +454,10 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
     else:
         valid_type = mime == "application/octet-stream" and os.path.splitext(name)[1].lower() in FILE_TYPES
     limit = MAX_VIDEO_BYTES if media_kind == "video" else MAX_FILE_BYTES
-    if not valid_type or not 0 < size <= limit or count != math.ceil(size / CHUNK_BYTES) or not 0 <= index < count:
+    if (not valid_type or not 0 < size <= limit or chunk_size not in (CHUNK_BYTES, VIDEO_CHUNK_BYTES)
+            or count != math.ceil(size / chunk_size) or not 0 <= index < count):
         return jsonify({"success": False, "message": "파일 형식 또는 크기가 올바르지 않습니다."}), 400
-    expected = min(CHUNK_BYTES, size - index * CHUNK_BYTES)
+    expected = min(chunk_size, size - index * chunk_size)
     if request.content_length and request.content_length > expected:
         return jsonify({"success": False, "message": "영상 조각의 크기가 초과되었습니다."}), 413
     data = await request.get_data()
@@ -450,18 +478,20 @@ async def _upload_chunk(kind, item_id, media_id, index, media_kind):
     key = ("file:" if media_kind == "file" else "") + _upload_key(kind, item_id, media_id)
     uploads = collection("media_uploads")
     state = await asyncio.to_thread(uploads.find_one, {"_id": key})
-    if state and (state["user_id"] != session["user_id"] or state["size"] != size or state["mime"] != mime or state["name"] != name or state["count"] != count):
+    if state and (state["user_id"] != session["user_id"] or state["size"] != size or state["mime"] != mime or state["name"] != name or state["count"] != count or state.get("chunk_size", CHUNK_BYTES) != chunk_size):
         return jsonify({"success": False, "message": "업로드 정보가 서로 다릅니다."}), 409
     try:
         sha = await asyncio.to_thread(_blob, data)
         await asyncio.to_thread(uploads.update_one, {"_id": key}, {
             "$setOnInsert": {
                 "user_id": session["user_id"], "name": name, "mime": mime,
-                "size": size, "count": count,
+                "size": size, "count": count, "chunk_size": chunk_size,
                 "expire_at": datetime.now(timezone.utc) + timedelta(hours=24),
             },
             "$set": {"chunks." + str(index): {"sha": sha, "size": len(data)}},
         }, upsert=True)
+    except MediaRateLimitError as exc:
+        return jsonify({"success": False, "message": str(exc), "retry_after": exc.retry_after}), 429, {"Retry-After": str(exc.retry_after)}
     except MediaStorageError as exc:
         return jsonify({"success": False, "message": str(exc)}), 502
     return jsonify({"success": True, "index": index})
@@ -516,9 +546,13 @@ async def _complete_chunks(kind, item_id, media_id, media_kind):
             "id": media_id, "name": state["name"], "kind": media_kind, "mime": state["mime"],
             "size": state["size"], "chunks": parts,
         }
+        if media_kind == "video":
+            media["chunk_size"] = state.get("chunk_size", CHUNK_BYTES)
         if poster:
             media["poster"] = poster
         saved = await asyncio.to_thread(_save_attachment, kind, item_id, media, field)
+    except MediaRateLimitError as exc:
+        return jsonify({"success": False, "message": str(exc), "retry_after": exc.retry_after}), 429, {"Retry-After": str(exc.retry_after)}
     except MediaStorageError as exc:
         return jsonify({"success": False, "message": str(exc)}), 502
     if not saved:
@@ -587,14 +621,15 @@ async def serve_media(kind, item_id, media_id):
         start = int(match.group(1)) if match else 0
     if start >= size:
         return Response(b"", status=416, headers={"Content-Range": "bytes */" + str(size)})
-    index = start // CHUNK_BYTES
+    chunk_size = media.get("chunk_size", CHUNK_BYTES)
+    index = start // chunk_size
     limit = OPEN_PLAYBACK_RANGE_BYTES if media["kind"] == "video" and match and not match.group(2) else MAX_PLAYBACK_RANGE_BYTES
     end = min(size - 1, start + limit - 1)
     if match and match.group(2):
         end = min(end, int(match.group(2)))
     if end < start:
         return Response(b"", status=416, headers={"Content-Range": "bytes */" + str(size)})
-    parts = media["chunks"][index:end // CHUNK_BYTES + 1]
+    parts = media["chunks"][index:end // chunk_size + 1]
     try:
         first = await asyncio.to_thread(_read_blob, parts[0]["sha"])
     except MediaStorageError:
@@ -603,7 +638,7 @@ async def serve_media(kind, item_id, media_id):
         abort(502)
 
     def selected_bytes(chunk, part_index):
-        absolute = part_index * CHUNK_BYTES
+        absolute = part_index * chunk_size
         return chunk[max(0, start - absolute):min(len(chunk), end + 1 - absolute)]
 
     async def stream_range():

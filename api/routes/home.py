@@ -538,7 +538,7 @@ def _render_inline_video(video, kind, item_id):
         '<figure class="dico-media dico-media-attachment">'
         f'<video class="dico-media-frame" src="{source}"{poster} controls preload="none" playsinline data-dico-stream></video>'
         '<figcaption class="dico-media-caption">'
-        f'<span>{name}</span><a href="{download}" download="{name}">다운로드</a>'
+        f'<span>{name}</span><a data-dico-download data-dico-size="{video.get("size", 0)}" href="{download}" download="{name}">다운로드</a>'
         '</figcaption></figure>'
     )
 
@@ -789,7 +789,7 @@ def _render_markdown(value, videos=(), kind=None, item_id=None):
         "div", "iframe", "video", "figure", "figcaption", "span",
     })
     allowed_attributes = {
-        "a": ("href", "title", "target", "rel", "download"),
+        "a": ("href", "title", "target", "rel", "download", "data-dico-download", "data-dico-size"),
         "img": ("src", "alt", "title", "loading", "class"),
         "code": ("class",),
         "div": ("class",),
