@@ -1,6 +1,7 @@
 window.DicoImageAttachments = window.DicoImageAttachments || (() => {
-    const chunkSize = 768 * 1024;
-    const videoChunkSize = 4 * 1024 * 1024;
+    const wireChunkSize = 4 * 1024 * 1024;
+    const imageChunkSize = 5 * 1024 * 1024;
+    const videoChunkSize = 50 * 1024 * 1024;
     const maxVideo = 10 * 1024 ** 3;
     const maxOriginalImage = 8 * 1024 * 1024;
     const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -56,37 +57,66 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
     }
 
     async function send(url, body, mime, csrfToken, signal, onRateLimit) {
-        while (true) {
-            const response = await fetch(url, {
-                method: 'POST',
-                body,
-                credentials: 'same-origin',
-                headers: {'Content-Type': mime, 'X-CSRF-Token': csrfToken, 'Accept': 'application/json'},
-                signal
-            });
-            let data;
-            try { data = await response.json(); } catch (_) { data = {}; }
-            if (response.status === 429 && Number.isFinite(data.retry_after)) {
-                const seconds = Math.min(3600, Math.max(1, data.retry_after));
-                onRateLimit?.(seconds);
-                await new Promise((resolve, reject) => {
-                    const cancel = () => { clearTimeout(timer); reject(new Error('업로드가 취소되었습니다.')); };
-                    const timer = setTimeout(() => {
-                        signal?.removeEventListener('abort', cancel);
-                        resolve();
-                    }, seconds * 1000);
-                    if (signal?.aborted) cancel();
-                    else signal?.addEventListener('abort', cancel, {once: true});
+        for (let attempt = 1; attempt <= 8; attempt++) {
+            if (signal?.aborted) throw new Error('업로드가 취소되었습니다.');
+            let response;
+            let data = {};
+            try {
+                response = await fetch(url, {
+                    method: 'POST', body, credentials: 'same-origin',
+                    headers: {'Content-Type': mime, 'X-CSRF-Token': csrfToken, 'Accept': 'application/json'},
+                    signal
                 });
+                try { data = await response.json(); } catch (_) { data = {}; }
+            } catch (error) {
+                if (signal?.aborted) throw new Error('업로드가 취소되었습니다.');
+                if (attempt === 8) throw error;
+                const seconds = Math.min(60, 2 ** (attempt - 1)) + Math.random() * 0.5;
+                onRateLimit?.(seconds);
+                await wait(seconds, signal);
                 continue;
             }
-            if (!response.ok || !data.success) {
-                throw new Error(data.message || (response.status === 413
-                    ? '파일 크기가 서버 제한을 초과했습니다.'
-                    : '파일을 저장하지 못했습니다. 다시 시도해 주세요.'));
+            if (response.ok && data.success) return data;
+            const retryable = response.status === 403 || response.status === 429 || response.status >= 500;
+            if (retryable && attempt < 8) {
+                const backoff = Math.min(60, 2 ** (attempt - 1)) + Math.random() * 0.5;
+                const retryAfter = retryAfterSeconds(response, data);
+                const seconds = Math.min(3600, Math.max(backoff, retryAfter || 0));
+                onRateLimit?.(seconds);
+                await wait(seconds, signal);
+                continue;
             }
-            return data;
+            throw new Error(data.message || (response.status === 413
+                ? '파일 크기가 서버 요청 한도를 초과했습니다.'
+                : '파일을 저장하지 못했습니다. 다시 시도해 주세요.'));
         }
+    }
+
+    function retryAfterSeconds(response, data) {
+        const bodyDelay = Number(data.retry_after);
+        const header = response.headers?.get?.('Retry-After');
+        let headerDelay = 0;
+        if (header) {
+            const value = Number(header);
+            if (Number.isFinite(value)) headerDelay = Math.max(0, value);
+            else {
+                const date = Date.parse(header);
+                if (Number.isFinite(date)) headerDelay = Math.max(0, (date - Date.now()) / 1000);
+            }
+        }
+        return Math.max(Number.isFinite(bodyDelay) ? bodyDelay : 0, headerDelay);
+    }
+
+    function wait(seconds, signal) {
+        return new Promise((resolve, reject) => {
+            if (signal?.aborted) { reject(new Error('업로드가 취소되었습니다.')); return; }
+            const cancel = () => { clearTimeout(timer); reject(new Error('업로드가 취소되었습니다.')); };
+            const timer = setTimeout(() => {
+                signal?.removeEventListener('abort', cancel);
+                resolve();
+            }, seconds * 1000);
+            signal?.addEventListener('abort', cancel, {once: true});
+        });
     }
 
     function mount(form, options = {}) {
@@ -102,12 +132,48 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
         let files = [];
         let pending = Promise.resolve();
         const activeUploads = new Set();
-        const pool = window.DicoUploadQueue.createPool(2);
+        const pool = window.DicoUploadQueue.createPool(1);
         let locked = false;
         let stopped = false;
         let targetId = null;
         let statusCheck = null;
         const csrfToken = form.querySelector('[name="csrf_token"]').value;
+
+        function uploadManifestKey(draftId) {
+            return 'dico-media-uploads:' + options.kind + ':' + draftId;
+        }
+
+        function readManifest(draftId) {
+            try {
+                const value = JSON.parse(window.sessionStorage?.getItem(uploadManifestKey(draftId)) || '[]');
+                return Array.isArray(value) ? value : [];
+            }
+            catch (_) { return []; }
+        }
+
+        function writeManifest(draftId, records) {
+            try {
+                const key = uploadManifestKey(draftId);
+                if (records.length) window.sessionStorage?.setItem(key, JSON.stringify(records));
+                else window.sessionStorage?.removeItem(key);
+            } catch (_) {}
+        }
+
+        function fingerprint(file, name) {
+            return [name, file.size, file.lastModified || 0, file.type || ''].join('\u0000');
+        }
+
+        function rememberEntry(entry, draftId) {
+            if (!draftId) return;
+            const records = readManifest(draftId).filter(record => record.id !== entry.id);
+            records.push({id: entry.id, fingerprint: entry.fingerprint});
+            writeManifest(draftId, records);
+        }
+
+        function forgetEntry(entry, draftId) {
+            if (!draftId) return;
+            writeManifest(draftId, readManifest(draftId).filter(record => record.id !== entry.id));
+        }
 
         function track(task) {
             activeUploads.add(task);
@@ -241,6 +307,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         if (options.kind && targetId) {
                             await send('/api/media/drafts/' + options.kind + '/' + targetId + '/remove/' + entry.id,
                                 '{}', 'application/json', csrfToken);
+                            forgetEntry(entry, targetId);
                         }
                         URL.revokeObjectURL(entry.previewUrl);
                         files = files.filter(item => item !== entry);
@@ -280,25 +347,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
             }
             if (!imageTypes.has(file.type)) throw new Error((file.name || '이미지') + ': PNG, JPG, WebP, GIF 또는 MP4, WebM, OGG만 지원합니다.');
             if (!file.size || file.size > maxOriginalImage) throw new Error((file.name || '이미지') + ': 원본 이미지는 8MB 이하로 선택해 주세요.');
-            if (file.size <= chunkSize) return file;
-            if (file.type === 'image/gif') throw new Error((file.name || '이미지') + ': 움직이는 GIF는 768KB 이하로 선택해 주세요.');
-            if (!window.createImageBitmap) throw new Error((file.name || '이미지') + ': 이미지를 768KB 이하로 줄여서 선택해 주세요.');
-            const bitmap = await createImageBitmap(file);
-            const canvas = document.createElement('canvas');
-            let scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
-            try {
-                for (let attempt = 0; attempt < 6; attempt++) {
-                    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-                    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-                    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.82));
-                    if (blob && blob.size <= chunkSize) return new File([blob], file.name || '붙여넣은 이미지.webp', {type: 'image/webp'});
-                    scale *= 0.75;
-                }
-            } finally {
-                bitmap.close?.();
-            }
-            throw new Error((file.name || '이미지') + ': 이미지를 업로드 가능한 크기로 줄이지 못했습니다.');
+            return file;
         }
 
         function addFiles(selected) {
@@ -311,11 +360,17 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         const file = await prepare(source);
                         if (stopped) break;
                         const name = typeof source.name === 'string' ? source.name.slice(0, 120) : '붙여넣은 이미지';
+                        if (options.ensureDraft) targetId = await options.ensureDraft();
+                        const fileFingerprint = fingerprint(source, name || '붙여넣은 이미지');
+                        const manifest = targetId ? readManifest(targetId) : [];
+                        const resumed = manifest.find(record => record.fingerprint === fileFingerprint
+                            && !files.some(entry => entry.id === record.id && !entry.removed));
                         files.push({
-                            id: crypto.randomUUID(), name: name || '붙여넣은 이미지',
+                            id: resumed?.id || crypto.randomUUID(), name: name || '붙여넣은 이미지',
                             file, previewUrl: URL.createObjectURL(file), controller: new AbortController(),
                             completedChunks: new Set(), uploaded: false,
-                            failed: false, removed: false, uploading: false
+                            failed: false, removed: false, uploading: false,
+                            fingerprint: fileFingerprint, resumed: Boolean(resumed)
                         });
                         const entry = files[files.length - 1];
                         render();
@@ -337,6 +392,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                                     await preflight();
                                     targetId = await options.ensureDraft();
                                     if (!stopped && !entry.removed) {
+                                        rememberEntry(entry, targetId);
                                         await uploadEntry(entry, options.kind, targetId, csrfToken);
                                         if (!entry.removed) announce(entry.name + ' 업로드를 완료했습니다.');
                                     }
@@ -378,34 +434,64 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
             try {
                 const mime = entry.file.type;
                 const name = encodeURIComponent(entry.name);
-                if (imageTypes.has(mime)) {
-                    announce(entry.name + ' 업로드 중…');
-                    await send(base + '/images/' + entry.id + '?name=' + name, entry.file, mime, token, entry.controller.signal);
-                } else {
-                    const total = Math.ceil(entry.file.size / videoChunkSize);
-                    const args = '?name=' + name + '&mime=' + encodeURIComponent(mime)
-                        + '&size=' + entry.file.size + '&count=' + total + '&chunk_size=' + videoChunkSize;
-                    const uploadChunk = async index => {
-                        if (stopped || entry.removed) return;
-                        await send(base + '/videos/' + entry.id + '/chunks/' + index + args,
-                            entry.file.slice(index * videoChunkSize, Math.min(entry.file.size, (index + 1) * videoChunkSize)),
-                            mime, token, entry.controller.signal, seconds => {
-                                entry.progress = 'GitHub 요청 제한 · ' + seconds + '초 후 재시도';
+                const image = imageTypes.has(mime);
+                const mediaRoute = image ? 'images' : 'videos';
+                const logicalSize = image ? imageChunkSize : videoChunkSize;
+                const total = Math.ceil(entry.file.size / logicalSize);
+                const statusResponse = await fetch(base + '/' + mediaRoute + '/' + entry.id + '/status', {
+                    credentials: 'same-origin', headers: {'X-CSRF-Token': token, 'Accept': 'application/json'},
+                    signal: entry.controller.signal
+                });
+                let serverState = {};
+                try { serverState = await statusResponse.json(); } catch (_) {}
+                if (!statusResponse.ok || !serverState.success) {
+                    throw new Error(serverState.message || '저장된 업로드 상태를 확인하지 못했습니다.');
+                }
+                if (serverState.complete) {
+                    entry.completedChunks = new Set(Array.from({length: total}, (_, index) => index));
+                    entry.uploaded = true;
+                    return;
+                }
+                if (serverState.total_size && serverState.total_size !== entry.file.size
+                    || serverState.mime_type && serverState.mime_type !== mime
+                    || serverState.chunk_size && serverState.chunk_size !== logicalSize) {
+                    throw new Error('이어올릴 파일의 이름 또는 내용이 기존 업로드와 다릅니다.');
+                }
+                entry.completedChunks = new Set(serverState.uploaded_chunks || []);
+                const chunksPerLogical = Math.ceil(logicalSize / wireChunkSize);
+                const digest = window.DicoSha256.create();
+                let bytesRead = 0;
+                for (let logicalIndex = 0; logicalIndex < total; logicalIndex++) {
+                    const groupStart = logicalIndex * logicalSize;
+                    const groupSize = Math.min(logicalSize, entry.file.size - groupStart);
+                    for (let chunkOffset = 0; chunkOffset < groupSize; chunkOffset += wireChunkSize) {
+                        if (stopped || entry.removed) throw new Error('업로드가 취소되었습니다.');
+                        const start = groupStart + chunkOffset;
+                        const end = Math.min(entry.file.size, start + wireChunkSize);
+                        const body = new Uint8Array(await entry.file.slice(start, end).arrayBuffer());
+                        digest.update(body);
+                        bytesRead += body.length;
+                        if (entry.completedChunks.has(logicalIndex)) continue;
+                        const physicalIndex = logicalIndex * chunksPerLogical + chunkOffset / wireChunkSize;
+                        const args = '?name=' + name + '&mime=' + encodeURIComponent(mime)
+                            + '&size=' + entry.file.size + '&count=' + total + '&chunk_size=' + logicalSize
+                            + '&chunk_index=' + logicalIndex + '&chunk_offset=' + chunkOffset;
+                        const responseData = await send(base + '/' + mediaRoute + '/' + entry.id + '/chunks/' + physicalIndex + args,
+                            body, mime, token, entry.controller.signal, seconds => {
+                                entry.progress = 'GitHub 요청 제한 · ' + Math.ceil(seconds) + '초 후 재시도';
                                 render();
                             });
-                        entry.completedChunks.add(index);
-                        entry.progress = '업로드 중 ' + entry.completedChunks.size + '/' + total;
-                        render();
-                    };
-                    if (!entry.completedChunks.has(0)) await uploadChunk(0);
-                    const remaining = Array.from({length: total - 1}, (_, index) => index + 1)
-                        .filter(index => !entry.completedChunks.has(index));
-                    await window.DicoUploadQueue.run(remaining, 3, uploadChunk);
-                    if (!entry.removed) {
-                        const poster = await entry.posterPromise;
-                        await send(base + '/videos/' + entry.id + '/complete', JSON.stringify({poster}), 'application/json', token, entry.controller.signal,
-                            seconds => { entry.progress = 'GitHub 요청 제한 · ' + seconds + '초 후 재시도'; render(); });
+                        entry.completedChunks = new Set(responseData.uploaded_chunks || entry.completedChunks);
                     }
+                    entry.progress = '업로드 중 ' + Math.max(logicalIndex + 1, entry.completedChunks.size) + '/' + total
+                        + ' · ' + Math.round(bytesRead / entry.file.size * 100) + '%';
+                    render();
+                }
+                if (!entry.removed) {
+                    const poster = image ? null : await entry.posterPromise;
+                    await send(base + '/' + mediaRoute + '/' + entry.id + '/complete',
+                        JSON.stringify({poster, sha256: digest.digest()}), 'application/json', token, entry.controller.signal,
+                        seconds => { entry.progress = 'GitHub 요청 제한 · ' + Math.ceil(seconds) + '초 후 재시도'; render(); });
                 }
                 if (!entry.removed) entry.uploaded = true;
             } finally {
@@ -418,7 +504,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
             locked = true;
             picker.disabled = true;
             render();
-            await track(window.DicoUploadQueue.run(files.filter(entry => !entry.uploaded && !entry.removed), 2,
+            await track(window.DicoUploadQueue.run(files.filter(entry => !entry.uploaded && !entry.removed), 1,
                 entry => uploadEntry(entry, kind, id, token)));
             announce('첨부파일을 저장했습니다.');
         }

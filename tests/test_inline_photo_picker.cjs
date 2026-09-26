@@ -46,14 +46,15 @@ const sandbox = {
     },
     Event: class {constructor(type) {this.type = type;}},
 };
-for (const file of ['media-upload-queue.js', 'image-attachments.js']) {
+for (const file of ['media-upload-queue.js', 'media-sha256.js', 'image-attachments.js']) {
     vm.runInNewContext(fs.readFileSync('api/static/js/' + file, 'utf8'), sandbox);
 }
 const uploader = sandbox.window.DicoImageAttachments.mount({
     querySelector: selector => selectors.get(selector), addEventListener() {},
 }, {kind: 'posts', ensureDraft: async () => 17, contentInput: content});
 
-picker.files = [{name: 'picture.png', type: 'image/png', size: 4}];
+picker.files = [{name: 'picture.png', type: 'image/png', size: 4,
+    slice(start, end) {return {arrayBuffer: async () => new ArrayBuffer(end - start)};}}];
 picker.listeners.change();
 
 (async () => {

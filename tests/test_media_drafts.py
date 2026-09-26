@@ -41,6 +41,69 @@ class MediaDraftTests(unittest.IsolatedAsyncioTestCase):
                 ("게시글/7/이미지/" + item["id"] + ".png", None),
             ])
 
+    def test_chunk_sizes_fit_the_function_ingress_limit_and_git_blob_limit(self):
+        self.assertEqual(media.WIRE_CHUNK_BYTES, 4 * 1024 * 1024)
+        self.assertEqual(media.IMAGE_CHUNK_BYTES, 5 * 1024 * 1024)
+        self.assertEqual(media.VIDEO_CHUNK_BYTES, 50 * 1024 * 1024)
+
+    def test_large_image_paths_are_saved_as_ordered_chunks(self):
+        image_id = "11111111-1111-4111-8111-111111111111"
+        paths = media._media_paths("posts", 7, {
+            "id": image_id, "kind": "image", "mime": "image/png",
+            "chunks": [{"sha": "a" * 40}, {"sha": "b" * 40}],
+        })
+        self.assertEqual(paths, [
+            "게시글/7/이미지/" + image_id + "/0000.part",
+            "게시글/7/이미지/" + image_id + "/0001.part",
+        ])
+
+    def test_github_blob_writes_are_serialized_with_a_random_gap(self):
+        class LockCollection:
+            def __init__(self):
+                self.state = None
+
+            def update_one(self, query, update, upsert=False):
+                if self.state is None:
+                    self.state = {"_id": query["_id"], **update["$setOnInsert"]}
+
+            def find_one_and_update(self, query, update):
+                now = query["lease_until"]["$lte"]
+                if self.state["lease_until"] > now or self.state["next_allowed_at"] > now:
+                    return None
+                previous = dict(self.state)
+                self.state.update(update["$set"])
+                return previous
+
+            def find_one(self, query):
+                return dict(self.state)
+
+            def update_one_release(self, query, update):
+                if self.state.get("lease_id") == query["lease_id"]:
+                    self.state.update(update["$set"])
+                    self.state.pop("lease_id", None)
+
+            update_one = update_one
+
+        locks = LockCollection()
+        original_update = locks.update_one
+
+        def update(query, change, upsert=False):
+            if "$unset" in change:
+                locks.update_one_release(query, change)
+            else:
+                original_update(query, change, upsert)
+
+        locks.update_one = update
+        with patch.object(media, "collection", return_value=locks), \
+                patch.object(media, "_blob", return_value="a" * 40) as blob, \
+                patch.object(media.random, "uniform", return_value=1.25):
+            self.assertEqual(media._queued_blob(b"part"), "a" * 40)
+            with self.assertRaises(media.MediaRateLimitError) as limited:
+                media._queued_blob(b"part 2")
+        self.assertEqual(blob.call_count, 1)
+        self.assertGreaterEqual(limited.exception.retry_after, 1.0)
+        self.assertNotIn("lease_id", locks.state)
+
     async def test_cancel_requires_csrf_and_deletes_only_owned_draft(self):
         async def ready():
             return None
@@ -89,8 +152,15 @@ class MediaDraftTests(unittest.IsolatedAsyncioTestCase):
             def delete_many(self, query):
                 self.removed = True
 
-        drafts, uploads = Drafts(), Uploads()
-        groups = {"media_drafts": drafts, "posts": Posts(), "media_uploads": uploads}
+        class UploadParts:
+            removed = False
+
+            def delete_many(self, query):
+                self.removed = True
+
+        drafts, uploads, upload_parts = Drafts(), Uploads(), UploadParts()
+        groups = {"media_drafts": drafts, "posts": Posts(), "media_uploads": uploads,
+                  "media_upload_parts": upload_parts}
         with patch.object(media, "collection", side_effect=groups.get), patch.object(media, "_commit_blobs") as commit:
             self.assertTrue(media._remove_draft_sync("posts", 7, 9))
             paths = [path for path, sha in commit.call_args.args[0]]
@@ -100,7 +170,7 @@ class MediaDraftTests(unittest.IsolatedAsyncioTestCase):
                 "게시글/7/영상/" + video_id + "/0001.part",
             ])
             self.assertTrue(all(sha is None for _, sha in commit.call_args.args[0]))
-            self.assertTrue(drafts.deleted and uploads.removed)
+            self.assertTrue(drafts.deleted and uploads.removed and upload_parts.removed)
 
     def test_publishing_reuses_reserved_ids_and_uploaded_media(self):
         draft = {"id": 7, "images": [{"id": "image"}], "files": [{"id": "file"}]}

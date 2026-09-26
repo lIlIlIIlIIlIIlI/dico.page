@@ -73,7 +73,7 @@ const sandbox = {
     },
     Event: class {constructor(type) {this.type = type;}},
 };
-for (const file of ['media-upload-queue.js', 'image-attachments.js']) {
+for (const file of ['media-upload-queue.js', 'media-sha256.js', 'image-attachments.js']) {
     vm.runInNewContext(fs.readFileSync('api/static/js/' + file, 'utf8'), sandbox);
 }
 const uploader = sandbox.window.DicoImageAttachments.mount({
@@ -81,7 +81,7 @@ const uploader = sandbox.window.DicoImageAttachments.mount({
 }, {kind: 'posts', ensureDraft: async () => 17, contentInput: content});
 
 picker.files = [{name: 'clip.mp4', type: 'video/mp4', size: 1000,
-    slice(start, end) {return {size: end - start};}}];
+    slice(start, end) {return {size: end - start, arrayBuffer: async () => new ArrayBuffer(end - start)};}}];
 picker.listeners.change();
 
 uploader.ready().then(() => {
