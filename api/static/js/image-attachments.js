@@ -468,7 +468,7 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                     for (let chunkOffset = 0; chunkOffset < groupSize; chunkOffset += wireChunkSize) {
                         if (stopped || entry.removed) throw new Error('업로드가 취소되었습니다.');
                         const start = groupStart + chunkOffset;
-                        const end = Math.min(entry.file.size, start + wireChunkSize);
+                        const end = Math.min(groupStart + groupSize, start + wireChunkSize);
                         const body = new Uint8Array(await entry.file.slice(start, end).arrayBuffer());
                         digest.update(body);
                         bytesRead += body.length;
