@@ -45,6 +45,7 @@ class MediaDraftTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.WIRE_CHUNK_BYTES, 4 * 1024 * 1024)
         self.assertEqual(media.IMAGE_CHUNK_BYTES, 5 * 1024 * 1024)
         self.assertEqual(media.VIDEO_CHUNK_BYTES, 50 * 1024 * 1024)
+        self.assertEqual(media.GITHUB_BLOB_BYTES, 12 * 1024 * 1024)
 
     def test_large_image_paths_are_saved_as_ordered_chunks(self):
         image_id = "11111111-1111-4111-8111-111111111111"

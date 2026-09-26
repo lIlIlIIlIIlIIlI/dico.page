@@ -477,11 +477,19 @@ window.DicoImageAttachments = window.DicoImageAttachments || (() => {
                         const args = '?name=' + name + '&mime=' + encodeURIComponent(mime)
                             + '&size=' + entry.file.size + '&count=' + total + '&chunk_size=' + logicalSize
                             + '&chunk_index=' + logicalIndex + '&chunk_offset=' + chunkOffset;
-                        const responseData = await send(base + '/' + mediaRoute + '/' + entry.id + '/chunks/' + physicalIndex + args,
-                            body, mime, token, entry.controller.signal, seconds => {
-                                entry.progress = 'GitHub 요청 제한 · ' + Math.ceil(seconds) + '초 후 재시도';
+                        let responseData;
+                        do {
+                            responseData = await send(base + '/' + mediaRoute + '/' + entry.id + '/chunks/' + physicalIndex + args,
+                                body, mime, token, entry.controller.signal, seconds => {
+                                    entry.progress = 'GitHub 요청 제한 · ' + Math.ceil(seconds) + '초 후 재시도';
+                                    render();
+                                });
+                            if (responseData.pending) {
+                                entry.progress = 'GitHub에 파일 조각 저장 중';
                                 render();
-                            });
+                                await wait(Math.max(1.5, Number(responseData.retry_after) || 0), entry.controller.signal);
+                            }
+                        } while (responseData.pending);
                         entry.completedChunks = new Set(responseData.uploaded_chunks || entry.completedChunks);
                     }
                     entry.progress = '업로드 중 ' + Math.max(logicalIndex + 1, entry.completedChunks.size) + '/' + total
